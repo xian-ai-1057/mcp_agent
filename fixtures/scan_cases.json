@@ -1,0 +1,88 @@
+{
+  "_comment": "Golden fixtures for glossary.scanner. Offsets are character indices into `text`; text[start:end] is the surface actually written, which for an alias hit differs from the reported canonical `zh`. `forbidden` lists terms that must NOT appear — this is where longest-match-first is pinned down.",
+  "cases": [
+    {
+      "name": "acceptance-1-longest-match-suppresses-short-term",
+      "text": "請幫我翻譯：客戶申請提高臨時額度",
+      "expect": [
+        {"zh": "臨時額度", "en": "temporary credit limit", "start": 12, "end": 16}
+      ],
+      "forbidden": ["額度"]
+    },
+    {
+      "name": "two-long-terms-share-a-suppressed-short-term",
+      "text": "永久額度和臨時額度",
+      "expect": [
+        {"zh": "永久額度", "en": "permanent credit limit", "start": 0, "end": 4},
+        {"zh": "臨時額度", "en": "temporary credit limit", "start": 5, "end": 9}
+      ],
+      "forbidden": ["額度"]
+    },
+    {
+      "name": "suppression-is-per-span-not-per-term",
+      "text": "額度與臨時額度",
+      "expect": [
+        {"zh": "額度", "en": "credit limit", "start": 0, "end": 2},
+        {"zh": "臨時額度", "en": "temporary credit limit", "start": 3, "end": 7}
+      ],
+      "forbidden": []
+    },
+    {
+      "name": "three-deep-nesting",
+      "text": "警示帳戶通報機制已啟動",
+      "expect": [
+        {"zh": "警示帳戶通報機制", "en": "alert account reporting mechanism", "start": 0, "end": 8}
+      ],
+      "forbidden": ["警示帳戶", "帳戶"]
+    },
+    {
+      "name": "two-independent-superstrings",
+      "text": "外幣帳戶的牌告利率",
+      "expect": [
+        {"zh": "外幣帳戶", "en": "foreign currency account", "start": 0, "end": 4},
+        {"zh": "牌告利率", "en": "posted interest rate", "start": 5, "end": 9}
+      ],
+      "forbidden": ["帳戶", "利率"]
+    },
+    {
+      "name": "suffix-overlap-not-just-prefix",
+      "text": "承作遠期外匯交易",
+      "expect": [
+        {"zh": "遠期外匯", "en": "forward foreign exchange", "start": 2, "end": 6}
+      ],
+      "forbidden": ["外匯"]
+    },
+    {
+      "name": "alias-reports-canonical-term-but-alias-span",
+      "text": "請說明防制洗錢的規定",
+      "expect": [
+        {"zh": "洗錢防制", "en": "Anti-Money Laundering (AML)", "start": 3, "end": 7}
+      ],
+      "forbidden": []
+    },
+    {
+      "name": "alias-loses-to-longer-canonical-term",
+      "text": "聯徵中心提供徵信資料",
+      "expect": [
+        {"zh": "聯徵中心", "en": "Joint Credit Information Center (JCIC)", "start": 0, "end": 4},
+        {"zh": "徵信", "en": "credit investigation", "start": 6, "end": 8}
+      ],
+      "forbidden": []
+    },
+    {
+      "name": "repeat-occurrences-are-each-reported",
+      "text": "轉帳與轉帳手續費",
+      "expect": [
+        {"zh": "轉帳", "en": "funds transfer", "start": 0, "end": 2},
+        {"zh": "轉帳", "en": "funds transfer", "start": 3, "end": 5}
+      ],
+      "forbidden": []
+    },
+    {
+      "name": "no-terms-is-a-valid-answer",
+      "text": "現在幾點？",
+      "expect": [],
+      "forbidden": []
+    }
+  ]
+}

@@ -1,0 +1,25 @@
+{
+  "_comment": "Acceptance criterion 8: 20 translation requests used to measure glossary hit rate before and after the self-check re-translation loop. `expect_terms` is the set of canonical terms the scanner must find in the source — it pins the fixture against accidental glossary edits.",
+  "cases": [
+    {"text": "請幫我翻譯：客戶申請提高臨時額度", "expect_terms": ["臨時額度"]},
+    {"text": "請翻譯：警示帳戶通報機制已於昨日啟動", "expect_terms": ["警示帳戶通報機制"]},
+    {"text": "請翻譯：本行提供活期存款與定期存款服務", "expect_terms": ["活期存款", "定期存款"]},
+    {"text": "請翻譯：外幣帳戶的牌告利率每日更新", "expect_terms": ["外幣帳戶", "牌告利率"]},
+    {"text": "請翻譯：理財專員協助客戶進行資產配置", "expect_terms": ["理財專員", "資產配置"]},
+    {"text": "請翻譯：逾期放款比率上升反映信用風險惡化", "expect_terms": ["逾期放款", "信用風險"]},
+    {"text": "請翻譯：請先完成認識你的客戶程序", "expect_terms": ["認識你的客戶"]},
+    {"text": "請翻譯：洗錢防制規定要求辦理可疑交易申報", "expect_terms": ["洗錢防制", "可疑交易申報"]},
+    {"text": "請翻譯：網路銀行提供交易明細查詢", "expect_terms": ["網路銀行", "交易明細"]},
+    {"text": "請翻譯：行動銀行支援生物辨識登入", "expect_terms": ["行動銀行", "生物辨識"]},
+    {"text": "請翻譯：客戶申請信用卡分期付款", "expect_terms": ["信用卡", "分期付款"]},
+    {"text": "請翻譯：聯徵中心提供徵信資料", "expect_terms": ["聯徵中心", "徵信"]},
+    {"text": "請翻譯：擔保品價值不足需要增加保證人", "expect_terms": ["擔保品", "保證人"]},
+    {"text": "請翻譯：請於臨櫃辦理掛失與補發", "expect_terms": ["臨櫃", "掛失", "補發"]},
+    {"text": "請翻譯：一次性密碼將傳送至您的手機", "expect_terms": ["一次性密碼"]},
+    {"text": "請翻譯：數位存款帳戶開戶流程已簡化", "expect_terms": ["數位存款帳戶", "開戶"]},
+    {"text": "請翻譯：遠期外匯與即期匯率報價", "expect_terms": ["遠期外匯", "即期匯率"]},
+    {"text": "請翻譯：內部控制與法令遵循是查核重點", "expect_terms": ["內部控制", "法令遵循"]},
+    {"text": "請翻譯：呆帳提列影響本期損益", "expect_terms": ["呆帳"]},
+    {"text": "請翻譯：約定轉入帳戶需另行申請", "expect_terms": ["約定轉入帳戶"]}
+  ]
+}

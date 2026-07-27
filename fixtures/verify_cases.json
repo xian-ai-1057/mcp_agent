@@ -1,0 +1,85 @@
+{
+  "_comment": "Golden fixtures for glossary.matcher — the HIT/WRONG/MISS judgement shared by verify_translation and offline evaluation. `expect` maps canonical zh -> verdict.",
+  "cases": [
+    {
+      "name": "exact-term-used",
+      "source": "客戶申請提高臨時額度",
+      "translation": "The customer applied to increase the temporary credit limit.",
+      "expect": {"臨時額度": "HIT"},
+      "hit_rate": 1.0
+    },
+    {
+      "name": "overlapping-term-used-instead-is-WRONG-not-MISS",
+      "source": "客戶申請提高臨時額度",
+      "translation": "The customer applied to increase the credit limit.",
+      "expect": {"臨時額度": "WRONG"},
+      "found": {"臨時額度": "credit limit"},
+      "hit_rate": 0.0
+    },
+    {
+      "name": "term-absent-entirely-is-MISS",
+      "source": "客戶申請提高臨時額度",
+      "translation": "The customer wants a higher ceiling on their card.",
+      "expect": {"臨時額度": "MISS"},
+      "hit_rate": 0.0
+    },
+    {
+      "name": "wrong-in-the-other-direction-long-used-for-short",
+      "source": "額度不足",
+      "translation": "Insufficient temporary credit limit.",
+      "expect": {"額度": "WRONG"},
+      "found": {"額度": "temporary credit limit"},
+      "hit_rate": 0.0
+    },
+    {
+      "name": "acronym-alone-counts-as-used",
+      "source": "請說明防制洗錢規定",
+      "translation": "Please explain the AML regulations.",
+      "expect": {"洗錢防制": "HIT"},
+      "hit_rate": 1.0
+    },
+    {
+      "name": "full-phrase-without-parenthetical-counts-as-used",
+      "source": "請說明防制洗錢規定",
+      "translation": "Please explain the anti-money laundering regulations.",
+      "expect": {"洗錢防制": "HIT"},
+      "hit_rate": 1.0
+    },
+    {
+      "name": "plural-counts-as-used",
+      "source": "壓力測試結果",
+      "translation": "The results of the stress tests.",
+      "expect": {"壓力測試": "HIT"},
+      "hit_rate": 1.0
+    },
+    {
+      "name": "partial-credit-across-two-terms",
+      "source": "外幣帳戶的牌告利率",
+      "translation": "The posted interest rate of the account.",
+      "expect": {"外幣帳戶": "WRONG", "牌告利率": "HIT"},
+      "found": {"外幣帳戶": "account"},
+      "hit_rate": 0.5
+    },
+    {
+      "name": "both-terms-used",
+      "source": "外幣帳戶的牌告利率",
+      "translation": "The posted interest rate of the foreign currency account.",
+      "expect": {"外幣帳戶": "HIT", "牌告利率": "HIT"},
+      "hit_rate": 1.0
+    },
+    {
+      "name": "a-sentence-with-no-terms-cannot-fail",
+      "source": "現在幾點？",
+      "translation": "What time is it now?",
+      "expect": {},
+      "hit_rate": 1.0
+    },
+    {
+      "name": "substring-of-a-longer-english-word-is-not-a-hit",
+      "source": "額度不足",
+      "translation": "There are limitations on the customer profile.",
+      "expect": {"額度": "MISS"},
+      "hit_rate": 0.0
+    }
+  ]
+}

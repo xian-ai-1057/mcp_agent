@@ -1,0 +1,15 @@
+{
+  "_comment": "Acceptance criterion 5 / 11: does the model pick the right tool? 5 translation requests, 5 clock requests. `expect_tool` is the tool the FIRST tool call should name. Criterion 11 re-runs the same file once all five tools are registered — the sentences are unchanged so the two numbers are comparable.",
+  "cases": [
+    {"text": "請幫我翻譯：客戶申請提高臨時額度", "expect_tool": "lookup_terms"},
+    {"text": "幫我把這句翻成英文：警示帳戶通報機制已啟動", "expect_tool": "lookup_terms"},
+    {"text": "請翻譯：客戶要辦理外幣帳戶開戶", "expect_tool": "lookup_terms"},
+    {"text": "翻成英文：本行提供財富管理與資產配置服務", "expect_tool": "lookup_terms"},
+    {"text": "請幫我翻譯這句話：逾期放款金額增加導致信用風險上升", "expect_tool": "lookup_terms"},
+    {"text": "現在幾點？", "expect_tool": "get_time"},
+    {"text": "今天是幾月幾號？", "expect_tool": "get_time"},
+    {"text": "請問現在台北時間是幾點", "expect_tool": "get_time"},
+    {"text": "告訴我目前的日期與時間", "expect_tool": "get_time"},
+    {"text": "現在紐約時間幾點？", "expect_tool": "get_time"}
+  ]
+}
