@@ -1,7 +1,23 @@
 # 架構圖與流程圖
 
-本文件是 `specs/001~003` 的視覺化補充。**規格以 spec 為準**；這裡畫的是同一套設計，
-方便快速建立整體圖像。所有圖為 Mermaid，GitHub 可直接渲染。
+本文件原本是 `specs/001~003` 翻譯 vertical slice 的視覺化補充。0.4 起，該流程是
+`translation` capability，不再是 Agent core 本身；下方既有圖仍用來說明這個 capability 與
+legacy `server.py`。目前 production entry path 是設定驅動的多 MCP 架構：
+
+```mermaid
+flowchart TD
+    UI["CLI / future HTTP or chat adapter"] --> CORE["generic AgentLoop<br/>gateway + budgets + policy hooks"]
+    CORE --> POOL["MCPToolPool<br/>config + names + timeout + env isolation"]
+    POOL --> UTIL["utilities MCP<br/>hello / time / weather"]
+    POOL --> TRANS["translation MCP<br/>lookup / verify"]
+    POOL --> RAG["RAG upload MCP<br/>safe staging file → HTTP upload job"]
+    TP["optional translation policy"] -.-> CORE
+    TRANS -.-> TP
+```
+
+核心依賴方向：`agent/loop.py` 只依賴 `agent/policy.py` 的通用 protocol；翻譯 prompt/policy
+位於 `capabilities/translation/`；三個 server 透過 `mcp_servers/common.py` 共用 MCP wire glue。
+RAG server 只是一個手寫 HTTP adapter，不包含任何外部 RAG repository 的內容。
 
 | # | 圖 | 回答什麼問題 |
 |---|---|---|

@@ -22,20 +22,25 @@ import json
 import os
 import sys
 from datetime import datetime, timezone
+from importlib.resources import files
 from pathlib import Path
 from typing import Any
 
 from agent.config import describe_env_source, load_env_file
 from agent.gateway import Gateway, GatewayError, HTTPGateway
 from agent.loop import AgentLoop
-from agent.mcp_client import MCPToolClient
+from agent.mcp_client import MCPToolPool
+from agent.mcp_config import default_mcp_server_configs
 from agent.metrics import Report, RunRecord, format_report, summarize
+from agent.prompts import SYSTEM_PROMPT
 from agent.testing import RuleBasedGateway
+from capabilities.translation.policy import TranslationSelfCheck
+from capabilities.translation.prompts import TRANSLATION_RULES
 from glossary.runtime import get_glossary
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-FIXTURES = REPO_ROOT / "fixtures"
-REPORTS = REPO_ROOT / "evals" / "reports"
+FIXTURES = Path(str(files("fixtures")))
+REPORTS = Path.cwd() / "evals" / "reports"
 
 SUITES = ("routing", "translation", "glossary")
 
@@ -136,8 +141,15 @@ async def amain(argv: list[str] | None = None) -> int:
 
     server_log = open(os.devnull, "w")
     try:
-        async with MCPToolClient(errlog=server_log) as tools:
-            loop = AgentLoop.from_env(gateway, tools)
+        async with MCPToolPool(default_mcp_server_configs(), errlog=server_log) as tools:
+            loop = AgentLoop.from_env(
+                gateway,
+                tools,
+                self_check=TranslationSelfCheck(
+                    max_retranslate=int(os.environ.get("AGENT_MAX_RETRANSLATE", "2"))
+                ),
+                system_prompt=f"{SYSTEM_PROMPT}\n\n{TRANSLATION_RULES}",
+            )
             payload["tools"] = sorted(tools.tool_names)
 
             for name in suites:

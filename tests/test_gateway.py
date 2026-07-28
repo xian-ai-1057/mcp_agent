@@ -12,6 +12,9 @@ import httpx
 import pytest
 
 from agent.gateway import GatewayError, HTTPGateway, parse_assistant_message
+from agent.loop import AgentLoop
+from agent.mcp_client import LocalToolRunner
+from tools.get_time import SPEC as GET_TIME
 
 
 def _tool_call(name="get_time", arguments='{"timezone": "Asia/Taipei"}', call_id="call_1"):
@@ -73,9 +76,22 @@ class TestParseAssistantMessage:
         )
         assert turn.tool_calls[0].id
 
-    def test_nameless_call_is_dropped(self):
-        turn = parse_assistant_message({"tool_calls": [_tool_call(name="")]})
-        assert turn.tool_calls == ()
+    def test_nameless_call_is_a_protocol_error(self):
+        with pytest.raises(GatewayError, match="no function name"):
+            parse_assistant_message({"tool_calls": [_tool_call(name="")]})
+
+    @pytest.mark.parametrize(
+        "message",
+        [
+            {"tool_calls": "not-a-list"},
+            {"tool_calls": ["not-an-object"]},
+            {"tool_calls": [{"function": "not-an-object"}]},
+            "not-an-object",
+        ],
+    )
+    def test_malformed_message_shapes_are_gateway_errors(self, message):
+        with pytest.raises(GatewayError):
+            parse_assistant_message(message)
 
     def test_content_returned_as_parts(self):
         turn = parse_assistant_message(
@@ -87,6 +103,15 @@ class TestParseAssistantMessage:
         turn = parse_assistant_message({"content": "thinking", "tool_calls": [_tool_call()]})
         assert turn.content == "thinking"
         assert turn.wants_tools
+
+    def test_refusal_is_preserved_from_top_level_or_content_parts(self):
+        top_level = parse_assistant_message({"content": None, "refusal": "cannot comply"})
+        assert top_level.refusal == "cannot comply"
+
+        content_part = parse_assistant_message(
+            {"content": [{"type": "refusal", "refusal": "blocked"}]}
+        )
+        assert content_part.refusal == "blocked"
 
     def test_multiple_calls_in_one_turn(self):
         turn = parse_assistant_message(
@@ -123,6 +148,54 @@ class TestHTTPGateway:
         assert seen["auth"] == "Bearer secret"
         assert seen["body"]["model"] == "fedgpt-medium"
         assert seen["body"]["tool_choice"] == "auto"
+
+    async def test_finish_reason_is_preserved(self):
+        gateway = self._gateway(
+            lambda request: httpx.Response(
+                200,
+                json={
+                    "choices": [
+                        {"message": {"content": "partial"}, "finish_reason": "length"}
+                    ]
+                },
+            )
+        )
+        turn = await gateway.complete([])
+        assert turn.finish_reason == "length"
+
+    async def test_strict_gateway_accepts_the_second_turn_tool_message(self):
+        requests = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            body = json.loads(request.content)
+            requests.append(body)
+            if len(requests) == 1:
+                return httpx.Response(
+                    200,
+                    json={"choices": [{"message": {"tool_calls": [_tool_call()]}}]},
+                )
+            tool_message = body["messages"][-1]
+            extra = set(tool_message) - {"role", "content", "tool_call_id"}
+            if extra:
+                return httpx.Response(400, text=f"unknown fields: {sorted(extra)}")
+            return httpx.Response(200, json={"choices": [{"message": {"content": "done"}}]})
+
+        client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        gateway = HTTPGateway(
+            base_url="https://gateway.example/v1",
+            api_key="secret",
+            model="m",
+            client=client,
+        )
+        try:
+            result = await AgentLoop(
+                gateway, LocalToolRunner({"get_time": GET_TIME})
+            ).run("現在幾點")
+        finally:
+            await client.aclose()
+
+        assert result.output == "done"
+        assert len(requests) == 2
 
     async def test_omits_tools_when_none_are_offered(self):
         seen = {}
@@ -176,6 +249,32 @@ class TestHTTPGateway:
     def test_missing_base_url_is_rejected_at_construction(self):
         with pytest.raises(GatewayError, match="GATEWAY_BASE_URL"):
             HTTPGateway(base_url="", api_key="", model="m")
+
+    def test_plain_http_is_allowed_only_for_loopback(self):
+        with pytest.raises(GatewayError, match="HTTPS"):
+            HTTPGateway(base_url="http://gateway.example/v1", api_key="secret", model="m")
+        gateway = HTTPGateway(base_url="http://127.0.0.1:8000/v1", api_key="secret", model="m")
+        assert gateway.base_url.startswith("http://127.0.0.1")
+
+    def test_invalid_port_is_rejected_at_construction(self):
+        with pytest.raises(GatewayError, match="valid port"):
+            HTTPGateway(base_url="https://gateway.example:not-a-port/v1", api_key="", model="m")
+
+    async def test_invalid_url_from_http_client_is_normalized(self):
+        def handler(request):
+            raise httpx.InvalidURL("unsafe detail")
+
+        with pytest.raises(GatewayError, match="gateway URL is invalid"):
+            await self._gateway(handler).complete([])
+
+    @pytest.mark.parametrize(
+        "payload",
+        [[], {"choices": [None]}, {"choices": [{}]}, {"choices": [{"message": "bad"}]}],
+    )
+    async def test_malformed_response_envelope_is_a_gateway_error(self, payload):
+        gateway = self._gateway(lambda request: httpx.Response(200, json=payload))
+        with pytest.raises(GatewayError):
+            await gateway.complete([])
 
     def test_configured_reads_the_environment(self, monkeypatch):
         monkeypatch.delenv("GATEWAY_BASE_URL", raising=False)

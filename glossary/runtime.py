@@ -6,12 +6,13 @@ a caching policy. Tests swap the loader with `set_loader`.
 
 import os
 import threading
+from importlib.resources import files
 from pathlib import Path
 
 from glossary.loader import Glossary, GlossaryLoader
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-DEFAULT_CSV = REPO_ROOT / "data" / "glossary.csv"
+DEFAULT_CSV = Path(str(files("data").joinpath("glossary.csv")))
 
 _lock = threading.Lock()
 _loader: GlossaryLoader | None = None

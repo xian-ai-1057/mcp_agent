@@ -1,8 +1,10 @@
 """Unit tests for `agent.bridge` (spec 003 §4)."""
 
 import json
+from types import SimpleNamespace
 
 import mcp.types as types
+import pytest
 
 from agent.bridge import (
     assistant_message,
@@ -35,6 +37,12 @@ class TestMcpToOpenAI:
     def test_missing_description_becomes_empty_string(self):
         tool = types.Tool(name="t", inputSchema={"type": "object"})
         assert mcp_tool_to_openai(tool)["function"]["description"] == ""
+
+    @pytest.mark.parametrize("name", ["a" * 65, "bad tool", ""])
+    def test_gateway_incompatible_tool_names_fail_at_the_bridge(self, name):
+        tool = SimpleNamespace(name=name, inputSchema={"type": "object"})
+        with pytest.raises(ValueError, match="not compatible"):
+            mcp_tool_to_openai(tool)
 
     def test_round_trips_every_real_tool(self):
         """Converted against the actual registry, not a hand-written stub."""
@@ -76,6 +84,38 @@ class TestMessageBuilders:
         turn = AssistantTurn(tool_calls=(ToolCall(id="c", name="t", arguments={"text": "額度"}),))
         assert "額度" in assistant_message(turn)["tool_calls"][0]["function"]["arguments"]
 
+    def test_malformed_arguments_are_replayed_verbatim(self):
+        turn = AssistantTurn(
+            tool_calls=(
+                ToolCall(
+                    id="c",
+                    name="get_time",
+                    raw_arguments="{not json",
+                    parse_error="bad JSON",
+                ),
+            )
+        )
+        assert assistant_message(turn)["tool_calls"][0]["function"]["arguments"] == "{not json"
+
+    def test_legacy_function_call_round_trip_is_symmetric(self):
+        call = ToolCall(
+            id="legacy",
+            name="get_time",
+            arguments={},
+            raw_arguments="{}",
+            protocol="function_call",
+        )
+        assert assistant_message(AssistantTurn(tool_calls=(call,))) == {
+            "role": "assistant",
+            "content": "",
+            "function_call": {"name": "get_time", "arguments": "{}"},
+        }
+        assert tool_result_message(call, "result") == {
+            "role": "function",
+            "name": "get_time",
+            "content": "result",
+        }
+
     def test_none_content_becomes_empty_string(self):
         assert assistant_message(AssistantTurn(content=None))["content"] == ""
 
@@ -84,9 +124,12 @@ class TestMessageBuilders:
         assert tool_result_message(call, '{"time": "12:00"}') == {
             "role": "tool",
             "tool_call_id": "c1",
-            "name": "get_time",
             "content": '{"time": "12:00"}',
         }
+
+    def test_tool_result_uses_only_fields_allowed_by_modern_chat_completions(self):
+        message = tool_result_message(ToolCall(id="c1", name="get_time"), "ok")
+        assert set(message) == {"role", "tool_call_id", "content"}
 
     def test_user_and_system_messages(self):
         assert user_message("hi") == {"role": "user", "content": "hi"}

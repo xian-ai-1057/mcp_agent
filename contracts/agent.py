@@ -7,6 +7,7 @@ see spec 003.
 """
 
 from enum import StrEnum
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -16,6 +17,9 @@ from contracts.tools import VerifyResult
 class StopReason(StrEnum):
     COMPLETED = "completed"
     MAX_TURNS = "max_turns"
+    LENGTH_LIMIT = "length_limit"
+    CONTENT_FILTER = "content_filter"
+    REFUSED = "refused"
 
 
 class Initiator(StrEnum):
@@ -62,3 +66,5 @@ class RunResult(BaseModel):
     metrics: RunMetrics = Field(default_factory=RunMetrics)
     tool_calls: list[ToolCallRecord] = Field(default_factory=list)
     verify: VerifyResult | None = None
+    artifacts: dict[str, Any] = Field(default_factory=dict)
+    policy_metrics: dict[str, int | float | str | bool] = Field(default_factory=dict)

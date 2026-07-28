@@ -1,51 +1,20 @@
-"""Multi-turn tool-calling orchestration.
+"""Capability-neutral model → tool → model orchestration."""
 
-Two things live here and nowhere else: the turn budget, and the decision to try
-again. `verify_translation` reports; this module decides. Keeping the decision
-out of the tool is what lets the tool stay stateless and independently testable,
-and lets the retry policy change without touching an MCP schema.
-
-See `specs/003-agent-client/spec.md` §5.
-"""
-
-import json
 import logging
 import os
 from dataclasses import dataclass, field
 from typing import Any
 
 from agent.bridge import assistant_message, system_message, tool_result_message, user_message
-from agent.gateway import AssistantTurn, Gateway, ToolCall
-from agent.mcp_client import ToolInvocationError, ToolRunner
-from agent.prompts import SYSTEM_PROMPT, retranslate_prompt
+from agent.gateway import Gateway, ToolCall
+from agent.policy import PolicyContext, RunPolicy
+from agent.prompts import SYSTEM_PROMPT
+from agent.tooling import ToolInvocationError, ToolRunner
 from contracts.agent import Initiator, RunMetrics, RunResult, StopReason, ToolCallRecord
-from contracts.tools import VerifyResult
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_MAX_TURNS = 6
-DEFAULT_MAX_RETRANSLATE = 2
-
-
-@dataclass(frozen=True)
-class TranslationSelfCheck:
-    """When to re-translate, and how many times.
-
-    The policy triggers on **observed tool use, not on the user's wording**: if
-    the model called the lookup tool, the run was a translation. No keyword
-    sniffing, so the agent stays general — a future tool gets its own policy, or
-    none at all.
-
-    Tool names live here rather than in the loop so that `AgentLoop` itself names
-    no tool.
-    """
-
-    lookup_tool: str = "lookup_terms"
-    verify_tool: str = "verify_translation"
-    max_retranslate: int = DEFAULT_MAX_RETRANSLATE
-
-    def applies(self, called: set[str], available: set[str]) -> bool:
-        return self.lookup_tool in called and self.verify_tool in available
 
 
 @dataclass
@@ -53,18 +22,24 @@ class AgentLoop:
     gateway: Gateway
     tools: ToolRunner
     max_turns: int = DEFAULT_MAX_TURNS
-    self_check: TranslationSelfCheck | None = field(default_factory=TranslationSelfCheck)
+    policies: tuple[RunPolicy, ...] = field(default_factory=tuple)
+    # Kept for source compatibility with 0.3.x callers. New code should pass a
+    # capability policy in ``policies``; the generic default enables none.
+    self_check: RunPolicy | None = None
     system_prompt: str = SYSTEM_PROMPT
+
+    def __post_init__(self) -> None:
+        if (
+            not isinstance(self.max_turns, int)
+            or isinstance(self.max_turns, bool)
+            or self.max_turns < 1
+        ):
+            raise ValueError("max_turns must be a positive integer")
 
     @classmethod
     def from_env(cls, gateway: Gateway, tools: ToolRunner, **overrides: Any) -> "AgentLoop":
         settings: dict[str, Any] = {
             "max_turns": int(os.environ.get("AGENT_MAX_TURNS", DEFAULT_MAX_TURNS)),
-            "self_check": TranslationSelfCheck(
-                max_retranslate=int(
-                    os.environ.get("AGENT_MAX_RETRANSLATE", DEFAULT_MAX_RETRANSLATE)
-                )
-            ),
         }
         settings.update(overrides)
         return cls(gateway=gateway, tools=tools, **settings)
@@ -92,7 +67,18 @@ class AgentLoop:
                 # recorded outcome — not an error. The plan refuses to assume
                 # tool use, and an assumption you refuse to make is one you have
                 # to measure (see `RunMetrics.called_any_tool`).
-                stop_reason = StopReason.COMPLETED
+                # The current terminal turn is authoritative, including an
+                # intentionally empty response. Do not leak an earlier tool-call
+                # preamble into the final answer.
+                last_content = turn.refusal or turn.content or ""
+                if turn.refusal:
+                    stop_reason = StopReason.REFUSED
+                elif turn.finish_reason == "length":
+                    stop_reason = StopReason.LENGTH_LIMIT
+                elif turn.finish_reason == "content_filter":
+                    stop_reason = StopReason.CONTENT_FILTER
+                else:
+                    stop_reason = StopReason.COMPLETED
                 break
 
             messages.append(assistant_message(turn))
@@ -102,17 +88,33 @@ class AgentLoop:
                 messages.append(tool_result_message(call, content))
 
         output = last_content
-        verify: VerifyResult | None = None
-        retranslations = 0
-
-        if self.self_check is not None and output:
-            called = {r.name for r in records}
-            if self.self_check.applies(called, self.tools.tool_names):
-                output, verify, retranslations, extra_records, extra_turns = (
-                    await self._repair(user_text, output, messages, turns)
+        artifacts: dict[str, Any] = {}
+        policy_metrics: dict[str, int | float | str | bool] = {}
+        active_policies = self.policies + (
+            (self.self_check,) if self.self_check is not None else ()
+        )
+        for policy in active_policies:
+            outcome = await policy.after_run(
+                PolicyContext(
+                    user_text=user_text,
+                    output=output,
+                    messages=list(messages),
+                    model_turns=turns,
+                    max_model_turns=self.max_turns,
+                    completed=stop_reason is StopReason.COMPLETED,
+                    records=tuple(records),
+                    gateway=self.gateway,
+                    tools=self.tools,
+                    invoke=self._invoke,
                 )
-                records.extend(extra_records)
-                turns += extra_turns
+            )
+            output = outcome.output
+            records.extend(outcome.records)
+            turns += outcome.model_turns
+            artifacts.update(outcome.artifacts)
+            policy_metrics.update(outcome.metrics)
+
+        retranslations = int(policy_metrics.get("translation.retranslations", 0))
 
         return RunResult(
             output=output,
@@ -125,7 +127,9 @@ class AgentLoop:
                 stop_reason=stop_reason,
             ),
             tool_calls=records,
-            verify=verify,
+            verify=artifacts.get("translation.verify"),
+            artifacts=artifacts,
+            policy_metrics=policy_metrics,
         )
 
     async def _invoke(
@@ -166,72 +170,3 @@ class AgentLoop:
             turn=turn,
             initiator=initiator,
         )
-
-    async def _verify(
-        self, source: str, translation: str, turn: int
-    ) -> tuple[VerifyResult | None, ToolCallRecord]:
-        assert self.self_check is not None
-        call = ToolCall(
-            id=f"policy_verify_{turn}",
-            name=self.self_check.verify_tool,
-            arguments={"source_text": source, "translation": translation},
-        )
-        content, record = await self._invoke(call, turn, initiator=Initiator.POLICY)
-        if not record.ok:
-            return None, record
-        try:
-            return VerifyResult.model_validate(json.loads(content)), record
-        except Exception as exc:  # malformed tool output must not kill the run
-            logger.warning("could not read verify_translation result: %s", exc)
-            return None, record
-
-    async def _repair(
-        self,
-        source: str,
-        translation: str,
-        messages: list[dict[str, Any]],
-        turn_offset: int,
-    ) -> tuple[str, VerifyResult | None, int, list[ToolCallRecord], int]:
-        """Re-translate while terms are still missing, bounded by the cap.
-
-        The cap is what guarantees termination: a model that keeps returning the
-        same flawed translation would otherwise loop forever, so the budget —
-        not the model's progress — is the stopping condition (criterion 9).
-        """
-        assert self.self_check is not None
-        records: list[ToolCallRecord] = []
-        extra_turns = 0
-
-        verify, record = await self._verify(source, translation, turn_offset)
-        records.append(record)
-        if verify is None:
-            return translation, None, 0, records, extra_turns
-
-        conversation = list(messages)
-        retranslations = 0
-
-        while verify.hit_rate < 1.0 and retranslations < self.self_check.max_retranslate:
-            conversation.append(user_message(retranslate_prompt(source, translation, verify)))
-            extra_turns += 1
-            # No tools on a repair turn: the terms are already in the prompt, and
-            # what is wanted back is text, not another lookup.
-            attempt: AssistantTurn = await self.gateway.complete(conversation, tools=None)
-            candidate = (attempt.content or "").strip()
-            if not candidate:
-                break
-
-            retranslations += 1
-            conversation.append(assistant_message(attempt))
-
-            new_verify, new_record = await self._verify(
-                source, candidate, turn_offset + extra_turns
-            )
-            records.append(new_record)
-            if new_verify is None:
-                break
-
-            # Never accept a worse translation than the one already in hand.
-            if new_verify.hit_rate >= verify.hit_rate:
-                translation, verify = candidate, new_verify
-
-        return translation, verify, retranslations, records, extra_turns

@@ -9,11 +9,13 @@ not editing the agent loop.
 See `specs/003-agent-client/spec.md` §2.
 """
 
+import ipaddress
 import json
 import os
 import uuid
 from dataclasses import dataclass, field
 from typing import Any, Protocol
+from urllib.parse import urlsplit
 
 import httpx
 
@@ -31,6 +33,7 @@ class ToolCall:
     arguments: dict[str, Any] = field(default_factory=dict)
     raw_arguments: str = ""
     parse_error: str | None = None
+    protocol: str = "tool_calls"
 
 
 @dataclass(frozen=True)
@@ -39,6 +42,8 @@ class AssistantTurn:
 
     content: str | None = None
     tool_calls: tuple[ToolCall, ...] = ()
+    finish_reason: str | None = None
+    refusal: str | None = None
     raw: dict[str, Any] = field(default_factory=dict)
 
     @property
@@ -81,43 +86,81 @@ def _coerce_arguments(raw: Any) -> tuple[dict[str, Any], str, str | None]:
     return {}, str(raw), f"unsupported arguments type {type(raw).__name__}"
 
 
-def _parse_tool_call(entry: dict[str, Any], index: int) -> ToolCall:
-    function = entry.get("function") or {}
+def _parse_tool_call(
+    entry: dict[str, Any], index: int, *, protocol: str = "tool_calls"
+) -> ToolCall:
+    function = entry.get("function")
+    if not isinstance(function, dict):
+        raise GatewayError(f"gateway tool call {index} has no function object")
+    name = function.get("name") or entry.get("name")
+    if not isinstance(name, str) or not name:
+        raise GatewayError(f"gateway tool call {index} has no function name")
     arguments, raw, error = _coerce_arguments(function.get("arguments"))
     return ToolCall(
         id=str(entry.get("id") or f"call_{index}_{uuid.uuid4().hex[:8]}"),
-        name=str(function.get("name") or entry.get("name") or ""),
+        name=name,
         arguments=arguments,
         raw_arguments=raw,
         parse_error=error,
+        protocol=protocol,
     )
 
 
-def parse_assistant_message(message: dict[str, Any]) -> AssistantTurn:
+def parse_assistant_message(
+    message: Any,
+    *,
+    finish_reason: str | None = None,
+) -> AssistantTurn:
     """Read one `choices[0].message` into an `AssistantTurn`."""
+    if not isinstance(message, dict):
+        raise GatewayError("gateway choice message must be an object")
     raw_calls = message.get("tool_calls")
     calls: list[ToolCall] = []
 
-    if isinstance(raw_calls, list):
-        calls = [
-            _parse_tool_call(entry, index)
-            for index, entry in enumerate(raw_calls)
-            if isinstance(entry, dict)
-        ]
+    if raw_calls is not None:
+        if not isinstance(raw_calls, list):
+            raise GatewayError("gateway tool_calls must be a list")
+        for index, entry in enumerate(raw_calls):
+            if not isinstance(entry, dict):
+                raise GatewayError(f"gateway tool call {index} must be an object")
+            calls.append(_parse_tool_call(entry, index))
     elif isinstance(message.get("function_call"), dict):
         # Legacy single-call shape, still emitted by some gateways.
-        calls = [_parse_tool_call({"function": message["function_call"]}, 0)]
+        calls = [
+            _parse_tool_call(
+                {"function": message["function_call"]}, 0, protocol="function_call"
+            )
+        ]
+    elif message.get("function_call") is not None:
+        raise GatewayError("gateway function_call must be an object")
+
+    refusal = message.get("refusal")
+    if refusal is not None and not isinstance(refusal, str):
+        raise GatewayError("gateway message refusal must be a string")
 
     content = message.get("content")
     if isinstance(content, list):
         # Some gateways return content parts rather than a bare string.
-        content = "".join(
-            part.get("text", "") for part in content if isinstance(part, dict)
-        )
+        text_parts: list[str] = []
+        refusal_parts: list[str] = []
+        for part in content:
+            if not isinstance(part, dict):
+                continue
+            text = part.get("text")
+            if isinstance(text, str):
+                text_parts.append(text)
+            part_refusal = part.get("refusal")
+            if isinstance(part_refusal, str):
+                refusal_parts.append(part_refusal)
+        content = "".join(text_parts)
+        if refusal is None and refusal_parts:
+            refusal = "".join(refusal_parts)
 
     return AssistantTurn(
         content=content if isinstance(content, str) else None,
-        tool_calls=tuple(call for call in calls if call.name),
+        tool_calls=tuple(calls),
+        finish_reason=finish_reason,
+        refusal=refusal,
         raw=message,
     )
 
@@ -135,6 +178,24 @@ class HTTPGateway:
     ) -> None:
         if not base_url:
             raise GatewayError("GATEWAY_BASE_URL is not set")
+        parsed = urlsplit(base_url)
+        if parsed.username or parsed.password or parsed.query or parsed.fragment:
+            raise GatewayError("GATEWAY_BASE_URL must not contain credentials, query, or fragment")
+        if not parsed.hostname:
+            raise GatewayError("GATEWAY_BASE_URL must include a host")
+        try:
+            _ = parsed.port
+        except ValueError as exc:
+            raise GatewayError("GATEWAY_BASE_URL must contain a valid port") from exc
+        loopback = parsed.hostname.lower() == "localhost"
+        try:
+            loopback = loopback or ipaddress.ip_address(parsed.hostname).is_loopback
+        except ValueError:
+            pass
+        if parsed.scheme != "https" and not (parsed.scheme == "http" and loopback):
+            raise GatewayError(
+                "GATEWAY_BASE_URL must use HTTPS (HTTP is allowed only for loopback)"
+            )
         self.base_url = base_url.rstrip("/")
         self.api_key = api_key
         self.model = model
@@ -185,6 +246,8 @@ class HTTPGateway:
             response = await self._http().post(
                 f"{self.base_url}/chat/completions", json=payload, headers=headers
             )
+        except httpx.InvalidURL as exc:
+            raise GatewayError("gateway URL is invalid") from exc
         except httpx.HTTPError as exc:
             raise GatewayError(f"gateway request failed: {exc}") from exc
 
@@ -198,8 +261,18 @@ class HTTPGateway:
         except ValueError as exc:
             raise GatewayError(f"gateway returned non-JSON body: {response.text[:500]}") from exc
 
+        if not isinstance(body, dict):
+            raise GatewayError("gateway JSON response must be an object")
         choices = body.get("choices")
-        if not choices:
+        if not isinstance(choices, list) or not choices:
             raise GatewayError(f"gateway response contained no choices: {body}")
-
-        return parse_assistant_message(choices[0].get("message") or {})
+        if not isinstance(choices[0], dict):
+            raise GatewayError("gateway choice must be an object")
+        if "message" not in choices[0]:
+            raise GatewayError("gateway choice contained no message")
+        finish_reason = choices[0].get("finish_reason")
+        if finish_reason is not None and not isinstance(finish_reason, str):
+            raise GatewayError("gateway finish_reason must be a string")
+        return parse_assistant_message(
+            choices[0]["message"], finish_reason=finish_reason
+        )

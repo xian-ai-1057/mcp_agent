@@ -23,7 +23,7 @@ from tools.base import ToolError, ToolSpec
 from tools.registry import discover
 
 SERVER_NAME = "mcp-agent-tools"
-SERVER_VERSION = "0.3.0"
+SERVER_VERSION = "0.4.0"
 
 logger = logging.getLogger(SERVER_NAME)
 
