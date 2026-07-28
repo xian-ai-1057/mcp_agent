@@ -4,18 +4,22 @@
 迴圈；翻譯、一般工具與 RAG 上傳分別由獨立 MCP server 提供。
 
 ```text
-CLI / FastAPI / HTML test bench
-              │
-        generic AgentLoop
-              │ ToolRunner
-        MCPToolPool (stdio)
-       ┌──────┼───────────┐
- utilities  translation  rag-upload
-   MCP          MCP          MCP
+Browser / other app ──HTTP──> FastAPI / AgentService ──┐
+CLI ────────────────────────────────────────────────────┤
+                                                       v
+                                               generic AgentLoop
+                                                ├─ Gateway ──> Model API
+                                                └─ ToolRunner
+                                                     v
+                                               MCPToolPool (stdio)
+                                                ├─ utilities MCP   [default]
+                                                ├─ translation MCP [default]
+                                                └─ RAG upload MCP  [explicit config]
+                                                        └─HTTP──> RAG Manager API
 ```
 
 舊版 `server.py` 仍保留為五工具聚合 server，供 0.3.x 相容與 regression tests 使用；
-新的 CLI 預設啟動分離的 utility 與 translation servers。
+CLI 與 FastAPI 預設都只啟動分離的 utility 與 translation servers。
 
 ## 快速開始
 
@@ -41,6 +45,7 @@ cp .env.example .env
 若受控的開發或內網 gateway 只有 HTTP，可在 server 端明確設定
 `GATEWAY_ALLOW_INSECURE_HTTP=true`。啟用後 API key、prompt、工具 schema 與結果都會以明文傳輸，
 因此不應用於不受信任的網路，也不能由 API request 動態開啟。
+實際模型請求送往 `GATEWAY_BASE_URL/chat/completions`；它不是下方的 Agent API URL。
 
 ## FastAPI 與網頁測試介面
 
@@ -85,18 +90,28 @@ curl -s http://127.0.0.1:8000/api/v1/runs \
 
 跨來源瀏覽器前端可重複傳入 `--cors-origin https://app.example.com`，或設定逗號分隔的
 `AGENT_CORS_ORIGINS`；server-to-server 呼叫不需要 CORS。這個測試服務沒有登入驗證，因此 CLI
-只允許綁定 loopback。若要讓其他主機存取，應在前方加入具驗證與 TLS 的 API gateway／反向代理。
+只允許綁定 loopback。若直接以 Uvicorn 綁定 LAN interface，還必須把瀏覽器實際送出的 hostname
+或 IP 加入逗號分隔的 `AGENT_TRUSTED_HOSTS`，否則會收到 `400 Invalid host header`；單獨設定
+`--host 0.0.0.0` 只負責 listen，並不放寬 Host allowlist。例如：
+
+```bash
+AGENT_TRUSTED_HOSTS=127.0.0.1,localhost,10.1.102.113 \
+  .venv/bin/uvicorn --env-file .env agent.web:app --host 0.0.0.0 --port 8803
+```
+
+這個服務本身沒有登入驗證。跨主機使用仍應限制在受控網路，正式部署則在前方加入具驗證與 TLS
+的 API gateway／反向代理，並只 allowlist 實際 public hostname。
 
 通用 profile 是預設值。它仍能看見已連線 MCP server 的工具，但不把任何翻譯規則寫死在
 Agent core。`--profile translation` 是一個可選 capability：增加翻譯 prompt 與術語驗證 policy。
 
 ## MCP servers
 
-| Server | 工具 | 性質 |
-|---|---|---|
-| `mcp_servers.utilities` | `say_hello`, `get_time`, `get_weather` | 通用、唯讀 |
-| `mcp_servers.translation` | `lookup_terms`, `verify_translation` | 翻譯 capability、唯讀 |
-| `mcp_servers.rag_upload` | `upload_document` | RAG ingestion 寫入操作 |
+| Server | 工具 | 啟用方式 | 性質 |
+|---|---|---|---|
+| `mcp_servers.utilities` | `say_hello`, `get_time`, `get_weather` | 預設 | 通用、唯讀 |
+| `mcp_servers.translation` | `lookup_terms`, `verify_translation` | 預設 | 翻譯 capability、唯讀 |
+| `mcp_servers.rag_upload` | `upload_document` | MCP JSON explicit config | RAG ingestion 寫入操作 |
 
 每個 server 都能獨立啟動：
 
@@ -143,6 +158,21 @@ Agent core。`--profile translation` 是一個可選 capability：增加翻譯 p
 
 目前 host transport 是 stdio。設定模型已為後續 transport adapter 留出邊界，但尚未實作
 Streamable HTTP client。
+
+### Glossary CSV 衝突處理
+
+`GLOSSARY_CSV` 可指向部署時掛載的正式對照表。公開的 `load_glossary()`／`GlossaryLoader`
+預設採 strict validation；translation MCP 使用的 process-wide runtime 則明確採 quarantine：
+
+- 同一 `zh`、相同 normalized English 的重複列安全合併，aliases 去重並記 warning。
+- 同一 `zh` 卻有不同英文時，不依 row order 選 first/last；該 surface 會被隔離。
+- 無關詞仍可正常查詢；只有輸入真的匹配隔離詞時，`lookup_terms`／`verify_translation` 才回傳
+  含來源行號的可預期 tool error。
+- alias 被多個 canonical 詞共用時只隔離該 alias，兩個 canonical 詞仍可使用。
+
+`aliases` 是 `|` 分隔的**中文來源別名**，不是英文同義譯法；CSV 額外欄位目前不會改變
+translation matcher。若同一中文詞需要依 category 使用不同英文，現行 text-only lookup 無法
+安全消歧，應先修正資料 surface 或擴充帶 context 的契約。
 
 ## RAG Upload MCP
 
@@ -203,8 +233,10 @@ self-check 行為需明確傳入 policy 或使用 `--profile translation`。
 - gateway 的現代 `role=tool` 訊息只送 `role/content/tool_call_id`，不再夾帶會讓 strict
   OpenAI-compatible gateway 回 400 的 legacy `name` 欄位。
 - MCP initialize/read/call 都有 timeout；transport failure 會正規化為可回報的 tool error。
-- 翻譯 self-check 只認成功的 model tool call，不會把失敗 lookup 當成驗證依據。
-- repair model calls 共用 `AGENT_MAX_TURNS`，不能突破總回合上限。
+- 翻譯 self-check 只在 core 正常完成且 output 非空時執行，只認成功、由 model 發起的 lookup，
+  並要求 exact pair 或唯一同 namespace 的 lookup／verify pair。
+- repair model calls 使用 `tools=None`，同時受 `max_retranslate` 與當次
+  `AgentLoop.max_turns` 剩餘額度限制（CLI／API 可 override）；candidate 的 hit rate 較差時保留原譯文。
 - 非文字 MCP result 目前明確報錯，不再靜默轉成空的成功結果。
 
 ## 新增工具或 server
@@ -259,5 +291,6 @@ fake 結果冒充模型準確率。
 - 工具選擇仍由模型依當次可見 schema/description 決定；大型 catalog 後續應增加 capability
   routing 與 top-k selection。
 
-原本 glossary 演算法與驗收規格仍保留於 `specs/`；詳細既有圖在
-[`docs/architecture.md`](docs/architecture.md)，其中 legacy root-server 圖應視為相容路徑。
+glossary 演算法與驗收規格仍保留於 `specs/`；production 架構、FastAPI lifecycle、Agent
+loop、translation policy、glossary quarantine 與 legacy 相容路徑的完整圖見
+[`docs/architecture.md`](docs/architecture.md)。

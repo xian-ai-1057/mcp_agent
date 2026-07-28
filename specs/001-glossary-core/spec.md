@@ -73,9 +73,13 @@ inside `limitation` while `AML)` and `(AML` still match.
 
 ### 4.1 CSV contract
 Columns `zh,en,aliases,category`. `aliases` is `|`-separated and may be blank.
-Blank lines and a leading BOM are tolerated.
+Aliases are additional Chinese source surfaces, not alternative English
+translations. Blank lines, a leading BOM, and unrelated extra columns are
+tolerated; extra columns do not change matcher semantics.
 
-Rejected at load time, with the offending row number in the message:
+The public `load_glossary()` and `GlossaryLoader` APIs default to
+`conflict_policy="error"`. Strict mode rejects at load time, with the offending
+row number in the message:
 - a missing required column
 - a blank `zh`, `en` or `category`
 - a duplicate `zh`
@@ -85,6 +89,24 @@ An alias that collides with some entry's canonical `zh` is **not** an error: the
 canonical form wins and the alias is dropped, because a canonical term is always
 the more specific claim.
 
+The process-wide production runtime explicitly selects
+`conflict_policy="quarantine"`. In this mode:
+
+- duplicate `zh` rows with the same `normalize_en(en)` are collapsed, aliases
+  are de-duplicated, and the first row remains the reporting row;
+- duplicate `zh` rows with different English are excluded from authoritative
+  indexes rather than resolved by source order;
+- an alias claimed by multiple canonical entries is excluded while both
+  canonical entries remain usable;
+- quarantined surfaces remain in the longest-first scan pattern. Selecting one
+  raises `GlossaryConflictError` with source line numbers, so the tools return a
+  recoverable error instead of silently choosing a translation;
+- a valid longer surface still suppresses a nested quarantined shorter surface.
+
+This policy is term-scoped availability, not conflict resolution. A text-only
+lookup has no safe way to choose category-specific English for the same Chinese
+surface.
+
 ### 4.2 `Glossary` (immutable value object)
 Built once per load and shared freely:
 
@@ -93,7 +115,8 @@ Built once per load and shared freely:
 | `entries` | Source order, for reporting |
 | `by_zh` | Canonical lookup |
 | `surface_to_entry` | `zh` and every alias → entry |
-| `scan_pattern` | Single alternation over all surfaces, **sorted longest-first** |
+| `conflicts` | quarantined surface → source/reason/line metadata |
+| `scan_pattern` | Single alternation over authoritative and quarantined surfaces, **sorted longest-first** |
 | `en_pattern_for(zh)` | Lazily compiled per-entry English matcher |
 
 ### 4.3 Reload policy — `mtime`, not hot-push
@@ -108,10 +131,15 @@ against the stamp of the loaded copy. Different ⇒ reload before returning.
   operate than the thing it saves.
 - **Why size as well as mtime:** one-second `mtime` granularity on some
   filesystems can hide an edit made within the same second as the previous load.
-- **Failure mode:** if the reload raises (someone saved a broken CSV), the
+- **Failure mode:** if structural validation raises (someone saved a broken
+  CSV), the
   previously loaded `Glossary` is retained, the error is logged once per stamp,
   and `get()` still returns a working glossary. A bad edit degrades to "stale",
   never to "down".
+- **Quarantine reload:** duplicate conflicts are a usable new snapshot in
+  production. Non-conflicting edits become visible immediately while only the
+  ambiguous surfaces are isolated; the old translation for a newly conflicted
+  term is not kept authoritative.
 - Guarded by an `RLock`; concurrent readers see either the old or the new
   `Glossary`, never a half-built one.
 
@@ -127,6 +155,11 @@ Single left-to-right pass with `Glossary.scan_pattern`. Because the alternation
 is ordered longest-first, at any position the longest surface wins; because
 `re.finditer` resumes *after* the match, a shorter term nested inside an
 accepted span is never re-examined.
+
+If the selected surface is quarantined, scanning raises
+`GlossaryConflictError`; it never falls through to a nested term or an arbitrary
+duplicate row. Translation tools convert this to `ToolError`, which MCP reports
+as an expected invocation failure.
 
 That is the whole algorithm, and it gives the property the acceptance criteria
 demand:

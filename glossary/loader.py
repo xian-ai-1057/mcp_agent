@@ -10,19 +10,53 @@ import threading
 from dataclasses import dataclass, field
 from pathlib import Path
 from types import MappingProxyType
-from typing import Mapping
+from typing import Literal, Mapping
 
 from contracts.glossary import GlossaryEntry
-from glossary.normalize import compile_pattern, expand_forms, normalize_zh
+from glossary.normalize import compile_pattern, expand_forms, normalize_en, normalize_zh
 
 logger = logging.getLogger(__name__)
 
 REQUIRED_COLUMNS = ("zh", "en", "category")
 ALIAS_SEPARATOR = "|"
+ConflictPolicy = Literal["error", "quarantine"]
 
 
 class GlossaryError(Exception):
     """The CSV could not be turned into a usable glossary."""
+
+
+@dataclass(frozen=True)
+class GlossaryConflict:
+    """One surface that cannot be mapped to a single authoritative entry."""
+
+    source: str
+    surface: str
+    lines: tuple[int, ...]
+    terms: tuple[str, ...]
+    reason: str
+
+    @property
+    def message(self) -> str:
+        line_list = ", ".join(str(line) for line in self.lines)
+        if self.reason == "duplicate term":
+            return (
+                f"{self.source}: glossary term {self.surface!r} has conflicting "
+                f"translations on lines {line_list}"
+            )
+        term_list = ", ".join(repr(term) for term in self.terms)
+        return (
+            f"{self.source}: glossary alias {self.surface!r} is claimed by {term_list} "
+            f"on lines {line_list}"
+        )
+
+
+class GlossaryConflictError(GlossaryError):
+    """A request selected a quarantined, ambiguous glossary surface."""
+
+    def __init__(self, conflict: GlossaryConflict) -> None:
+        self.conflict = conflict
+        super().__init__(conflict.message)
 
 
 @dataclass(frozen=True)
@@ -34,6 +68,9 @@ class Glossary:
     surface_to_entry: Mapping[str, GlossaryEntry]
     scan_pattern: re.Pattern[str]
     stamp: tuple[int, int] = (0, 0)
+    conflicts: Mapping[str, GlossaryConflict] = field(
+        default_factory=lambda: MappingProxyType({})
+    )
     _en_patterns: Mapping[str, re.Pattern[str]] = field(default_factory=dict, repr=False)
     _overlaps: Mapping[str, tuple[str, ...]] = field(default_factory=dict, repr=False)
 
@@ -52,6 +89,10 @@ class Glossary:
         tell the two apart.
         """
         return tuple(self.by_zh[other] for other in self._overlaps.get(zh, ()))
+
+    def conflict_for(self, surface: str) -> GlossaryConflict | None:
+        """Return quarantine metadata when ``surface`` is ambiguous."""
+        return self.conflicts.get(surface)
 
 
 def _split_aliases(raw: str | None) -> list[str]:
@@ -76,8 +117,16 @@ def _read_rows(path: Path) -> list[dict[str, str]]:
         raise GlossaryError(f"{path}: not valid UTF-8 ({exc})") from exc
 
 
-def _build_entries(rows: list[dict[str, str]], path: Path) -> tuple[GlossaryEntry, ...]:
-    entries: list[GlossaryEntry] = []
+def _build_entries(
+    rows: list[dict[str, str]],
+    path: Path,
+    conflict_policy: ConflictPolicy,
+) -> tuple[
+    tuple[GlossaryEntry, ...],
+    dict[str, tuple[int, ...]],
+    dict[str, GlossaryConflict],
+]:
+    sourced: list[tuple[GlossaryEntry, int]] = []
     seen_zh: dict[str, int] = {}
 
     for offset, row in enumerate(rows):
@@ -94,26 +143,88 @@ def _build_entries(rows: list[dict[str, str]], path: Path) -> tuple[GlossaryEntr
         except Exception as exc:
             raise GlossaryError(f"{path}:{line}: invalid row ({exc})") from exc
 
-        if entry.zh in seen_zh:
+        if conflict_policy == "error" and entry.zh in seen_zh:
             raise GlossaryError(
-                f"{path}:{line}: duplicate term {entry.zh!r} (first seen on line {seen_zh[entry.zh]})"
+                f"{path}:{line}: duplicate term {entry.zh!r} "
+                f"(first seen on line {seen_zh[entry.zh]})"
             )
-        seen_zh[entry.zh] = line
-        entries.append(entry)
+        seen_zh.setdefault(entry.zh, line)
+        sourced.append((entry, line))
 
-    if not entries:
+    if not sourced:
         raise GlossaryError(f"{path}: no usable rows")
-    return tuple(entries)
+
+    grouped: dict[str, list[tuple[GlossaryEntry, int]]] = {}
+    for entry, line in sourced:
+        grouped.setdefault(entry.zh, []).append((entry, line))
+
+    entries: list[GlossaryEntry] = []
+    source_lines: dict[str, tuple[int, ...]] = {}
+    conflicts: dict[str, GlossaryConflict] = {}
+
+    for zh, group in grouped.items():
+        first_entry, _ = group[0]
+        lines = tuple(line for _, line in group)
+        source_lines[zh] = lines
+        if len(group) == 1:
+            entries.append(first_entry)
+            continue
+
+        if conflict_policy == "error":  # pragma: no cover - rejected while parsing
+            raise AssertionError("strict duplicate should have failed during row parsing")
+
+        translations = {normalize_en(entry.en) for entry, _ in group}
+        if len(translations) == 1:
+            aliases = list(
+                dict.fromkeys(alias for entry, _ in group for alias in entry.aliases)
+            )
+            entries.append(first_entry.model_copy(update={"aliases": aliases}))
+            logger.warning(
+                "%s: duplicate term %r on lines %s has the same translation; "
+                "collapsed to one entry",
+                path,
+                zh,
+                ", ".join(str(line) for line in lines),
+            )
+            continue
+
+        conflict = GlossaryConflict(
+            source=str(path),
+            surface=zh,
+            lines=lines,
+            terms=(zh,),
+            reason="duplicate term",
+        )
+        conflicts[zh] = conflict
+        for entry, _ in group:
+            for alias in entry.aliases:
+                conflicts.setdefault(
+                    alias,
+                    GlossaryConflict(
+                        source=str(path),
+                        surface=alias,
+                        lines=lines,
+                        terms=(zh,),
+                        reason="duplicate term",
+                    ),
+                )
+        logger.warning("%s; quarantining the ambiguous term", conflict.message)
+
+    return tuple(entries), source_lines, conflicts
 
 
 def _build_surface_index(
-    entries: tuple[GlossaryEntry, ...], path: Path
-) -> dict[str, GlossaryEntry]:
+    entries: tuple[GlossaryEntry, ...],
+    path: Path,
+    source_lines: Mapping[str, tuple[int, ...]],
+    conflicts: dict[str, GlossaryConflict],
+    conflict_policy: ConflictPolicy,
+) -> tuple[dict[str, GlossaryEntry], dict[str, GlossaryConflict]]:
     """Map every scannable Chinese surface to its entry.
 
     A canonical term always wins over another entry's alias — the canonical form
-    is the more specific claim. Two entries claiming the *same* alias is an
-    unresolvable ambiguity and fails the load.
+    is the more specific claim. Two entries claiming the *same* alias fail in
+    strict mode or quarantine only that alias in production mode.
     """
     canonical = {entry.zh: entry for entry in entries}
     surfaces = dict(canonical)
@@ -121,6 +232,27 @@ def _build_surface_index(
 
     for entry in entries:
         for alias in entry.aliases:
+            existing_conflict = conflicts.get(alias)
+            if existing_conflict is not None:
+                if (
+                    conflict_policy == "quarantine"
+                    and existing_conflict.reason == "alias collision"
+                    and entry.zh not in existing_conflict.terms
+                ):
+                    terms = (*existing_conflict.terms, entry.zh)
+                    lines = tuple(
+                        dict.fromkeys(
+                            line for term in terms for line in source_lines.get(term, ())
+                        )
+                    )
+                    conflicts[alias] = GlossaryConflict(
+                        source=str(path),
+                        surface=alias,
+                        lines=lines,
+                        terms=terms,
+                        reason="alias collision",
+                    )
+                continue
             if alias in canonical:
                 logger.warning(
                     "%s: alias %r of %r collides with a canonical term; keeping the canonical entry",
@@ -131,13 +263,40 @@ def _build_surface_index(
                 continue
             previous = alias_owner.get(alias)
             if previous is not None and previous.zh != entry.zh:
-                raise GlossaryError(
-                    f"{path}: alias {alias!r} is claimed by both {previous.zh!r} and {entry.zh!r}"
+                if conflict_policy == "error":
+                    previous_lines = source_lines.get(previous.zh, ())
+                    current_lines = source_lines.get(entry.zh, ())
+                    location = f"{path}:{current_lines[0]}" if current_lines else str(path)
+                    first_claim = (
+                        f" (first claimed on line {previous_lines[0]})"
+                        if previous_lines
+                        else ""
+                    )
+                    raise GlossaryError(
+                        f"{location}: alias {alias!r} is claimed by both "
+                        f"{previous.zh!r} and {entry.zh!r}{first_claim}"
+                    )
+                terms = tuple(dict.fromkeys((previous.zh, entry.zh)))
+                lines = tuple(
+                    dict.fromkeys(
+                        line for term in terms for line in source_lines.get(term, ())
+                    )
                 )
+                conflict = GlossaryConflict(
+                    source=str(path),
+                    surface=alias,
+                    lines=lines,
+                    terms=terms,
+                    reason="alias collision",
+                )
+                conflicts[alias] = conflict
+                surfaces.pop(alias, None)
+                logger.warning("%s; quarantining the ambiguous alias", conflict.message)
+                continue
             alias_owner[alias] = entry
             surfaces[alias] = entry
 
-    return surfaces
+    return surfaces, conflicts
 
 
 def _build_overlaps(entries: tuple[GlossaryEntry, ...]) -> dict[str, tuple[str, ...]]:
@@ -156,11 +315,43 @@ def build_glossary(
     entries: tuple[GlossaryEntry, ...],
     path: Path,
     stamp: tuple[int, int] = (0, 0),
+    *,
+    source_lines: Mapping[str, tuple[int, ...]] | None = None,
+    conflicts: Mapping[str, GlossaryConflict] | None = None,
+    conflict_policy: ConflictPolicy = "error",
 ) -> Glossary:
-    surfaces = _build_surface_index(entries, path)
+    if conflict_policy not in {"error", "quarantine"}:
+        raise ValueError(f"unknown glossary conflict policy: {conflict_policy!r}")
+    seen_canonical: set[str] = set()
+    for entry in entries:
+        if entry.zh in seen_canonical:
+            raise GlossaryError(
+                f"{path}: duplicate term {entry.zh!r} in pre-built glossary entries"
+            )
+        seen_canonical.add(entry.zh)
+
+    mutable_conflicts = dict(conflicts or {})
+    surfaces, mutable_conflicts = _build_surface_index(
+        entries,
+        path,
+        source_lines or {},
+        mutable_conflicts,
+        conflict_policy,
+    )
+    # A canonical entry is always more specific than an ambiguous alias. A
+    # quarantined canonical term, however, must suppress another entry's alias.
+    canonical = {entry.zh for entry in entries}
+    for surface in tuple(mutable_conflicts):
+        if surface in canonical:
+            mutable_conflicts.pop(surface)
+        else:
+            surfaces.pop(surface, None)
     # Longest first: the scanner relies on alternation order for longest-match
     # semantics, so this sort *is* the algorithm (spec 001 §5).
-    ordered = sorted(surfaces, key=lambda s: (-len(s), s))
+    ordered = sorted(
+        {*surfaces, *mutable_conflicts},
+        key=lambda surface: (-len(surface), surface),
+    )
     pattern = (
         re.compile("|".join(re.escape(s) for s in ordered)) if ordered else re.compile(r"(?!x)x")
     )
@@ -168,6 +359,7 @@ def build_glossary(
         entries=entries,
         by_zh=MappingProxyType({entry.zh: entry for entry in entries}),
         surface_to_entry=MappingProxyType(surfaces),
+        conflicts=MappingProxyType(mutable_conflicts),
         scan_pattern=pattern,
         stamp=stamp,
         _en_patterns=MappingProxyType(
@@ -187,8 +379,18 @@ def _stamp(path: Path) -> tuple[int, int]:
     return (stat.st_mtime_ns, stat.st_size)
 
 
-def load_glossary(path: str | Path) -> Glossary:
-    """Read and compile the CSV once. Raises `GlossaryError` on bad data."""
+def load_glossary(
+    path: str | Path,
+    *,
+    conflict_policy: ConflictPolicy = "error",
+) -> Glossary:
+    """Read and compile the CSV once.
+
+    Strict conflict handling is the public default. Production runtime opts in
+    to term-scoped quarantine explicitly; malformed rows remain fatal in both.
+    """
+    if conflict_policy not in {"error", "quarantine"}:
+        raise ValueError(f"unknown glossary conflict policy: {conflict_policy!r}")
     resolved = Path(path)
     try:
         stamp = _stamp(resolved)
@@ -196,8 +398,17 @@ def load_glossary(path: str | Path) -> Glossary:
         raise GlossaryError(f"{resolved}: glossary CSV not found") from exc
     except OSError as exc:
         raise GlossaryError(f"{resolved}: cannot stat glossary CSV ({exc})") from exc
-    entries = _build_entries(_read_rows(resolved), resolved)
-    return build_glossary(entries, resolved, stamp)
+    entries, source_lines, conflicts = _build_entries(
+        _read_rows(resolved), resolved, conflict_policy
+    )
+    return build_glossary(
+        entries,
+        resolved,
+        stamp,
+        source_lines=source_lines,
+        conflicts=conflicts,
+        conflict_policy=conflict_policy,
+    )
 
 
 class GlossaryLoader:
@@ -207,10 +418,20 @@ class GlossaryLoader:
     fixed schedule, and a server that read it only at startup would serve stale
     translations silently. A reload of a few hundred rows is sub-millisecond, so
     there is nothing to amortise and no invalidation protocol worth operating.
+    ``conflict_policy`` controls only duplicate/alias ambiguity; it never makes
+    structurally invalid rows acceptable.
     """
 
-    def __init__(self, path: str | Path) -> None:
+    def __init__(
+        self,
+        path: str | Path,
+        *,
+        conflict_policy: ConflictPolicy = "error",
+    ) -> None:
+        if conflict_policy not in {"error", "quarantine"}:
+            raise ValueError(f"unknown glossary conflict policy: {conflict_policy!r}")
         self.path = Path(path)
+        self.conflict_policy = conflict_policy
         self._lock = threading.RLock()
         self._glossary: Glossary | None = None
         self._failed_stamp: tuple[int, int] | None = None
@@ -230,7 +451,10 @@ class GlossaryLoader:
                 return self._glossary
 
             try:
-                glossary = load_glossary(self.path)
+                glossary = load_glossary(
+                    self.path,
+                    conflict_policy=self.conflict_policy,
+                )
             except GlossaryError:
                 # A broken edit degrades the system to "stale", never to "down".
                 if self._glossary is None:
@@ -243,5 +467,10 @@ class GlossaryLoader:
             self._glossary = glossary
             self._failed_stamp = None
             self.reload_count += 1
-            logger.info("loaded %d glossary terms from %s", len(glossary), self.path)
+            logger.info(
+                "loaded %d glossary terms from %s (%d quarantined surfaces)",
+                len(glossary),
+                self.path,
+                len(glossary.conflicts),
+            )
             return glossary

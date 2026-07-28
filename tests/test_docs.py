@@ -50,10 +50,58 @@ class TestModuleNamesStayInSync:
             "metrics.py",
             "cli.py",
             "server.py",
+            "agent/web.py",
+            "agent/mcp_config.py",
+            "agent/policy.py",
+            "mcp_servers/common.py",
+            "mcp_servers/utilities.py",
+            "mcp_servers/translation.py",
+            "mcp_servers/rag_upload",
+            "capabilities/translation/policy.py",
+            "contracts/api.py",
         ],
     )
     def test_documented_module_exists(self, architecture, module):
         assert module in architecture, f"{module} is not mentioned in {DOCS}"
+
+
+class TestProductionArchitectureStaysVisible:
+    @pytest.mark.parametrize(
+        "boundary",
+        [
+            "AgentService",
+            "MCPToolPool",
+            "/api/v1/runs",
+            "/chat/completions",
+            "/datacenter/v1/file",
+            "upload_document",
+        ],
+    )
+    def test_runtime_boundaries_are_documented(self, architecture, boundary):
+        assert boundary in architecture, f"{boundary} is missing from {DOCS}"
+
+    def test_readme_carries_the_same_runtime_boundaries(self):
+        text = README.read_text(encoding="utf-8")
+        required = {
+            "AgentService",
+            "MCPToolPool",
+            "/api/v1/runs",
+            "/chat/completions",
+            "/datacenter/v1/file",
+            "upload_document",
+        }
+        missing = sorted(item for item in required if item not in text)
+        assert not missing, f"runtime boundaries missing from {README}: {missing}"
+
+    def test_default_and_explicit_servers_are_not_conflated(self, architecture):
+        assert "Default: utilities + translation" in architecture
+        assert "RAG requires explicit config" in architecture
+
+    def test_toc_targets_match_current_section_headings(self, architecture):
+        assert "[服務與端到端序列](#3-服務生命週期與端到端流程圖)" in architecture
+        assert "## 3. 服務生命週期與端到端流程圖" in architecture
+        assert "[能力註冊與聚合](#9-能力註冊與多-mcp-聚合)" in architecture
+        assert "## 9. 能力註冊與多 MCP 聚合" in architecture
 
 
 class TestMermaidBlocks:

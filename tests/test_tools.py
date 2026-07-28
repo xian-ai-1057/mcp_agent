@@ -209,3 +209,35 @@ class TestGlossaryToolsSeeReloads:
         result = all_specs["lookup_terms"].run({"text": "臨時額度"})
         assert result["matches"][0]["zh"] == "臨時額度"
         assert loader.reload_count == 2
+
+    def test_lookup_uses_unrelated_rows_when_duplicates_are_quarantined(
+        self, all_specs, installed_glossary
+    ):
+        installed_glossary(
+            [
+                ("信用卡", "Credit Card", "", "卡片"),
+                ("警示帳戶", "Watchlisted Account", "", "風控"),
+                ("警示帳戶", "Warning Account", "", "警示帳戶"),
+            ],
+            conflict_policy="quarantine",
+        )
+
+        result = all_specs["lookup_terms"].run({"text": "客戶申請信用卡"})
+
+        assert result["matches"] == [
+            {"zh": "信用卡", "en": "Credit Card", "start": 4, "end": 7}
+        ]
+
+    def test_lookup_reports_a_quarantined_term_as_a_tool_error(
+        self, all_specs, installed_glossary
+    ):
+        installed_glossary(
+            [
+                ("警示帳戶", "Watchlisted Account", "", "風控"),
+                ("警示帳戶", "Warning Account", "", "警示帳戶"),
+            ],
+            conflict_policy="quarantine",
+        )
+
+        with pytest.raises(ToolError, match=r"conflicting translations on lines 2, 3"):
+            all_specs["lookup_terms"].run({"text": "這是警示帳戶"})

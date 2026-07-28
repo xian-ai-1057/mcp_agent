@@ -4,9 +4,10 @@ from typing import Any
 
 from capabilities.translation.prompts import format_glossary_block
 from contracts.tools import LookupResult
+from glossary.loader import GlossaryConflictError
 from glossary.runtime import get_glossary
 from glossary.scanner import scan
-from tools.base import ToolSpec, object_schema
+from tools.base import ToolError, ToolSpec, object_schema
 
 # Written to be read by the model, and to be blunt about ordering: the offline
 # experiment measured 42.7% / 49.7% without the glossary against 98.1% / 99.0%
@@ -20,6 +21,9 @@ you are confident you already know the terms — the glossary overrides your own
 preference and is the only authoritative source. Returns the terms found, with \
 their required English, plus a ready-to-use glossary block.
 
+If the source selects a glossary term with conflicting authoritative rows, the \
+call fails explicitly instead of choosing a translation by CSV row order.
+
 Do not call this for English-to-Chinese translation, and do not call it for \
 requests that are not translation requests.\
 """
@@ -27,7 +31,10 @@ requests that are not translation requests.\
 
 def _run(arguments: dict[str, Any]) -> dict[str, Any]:
     text = arguments.get("text") or ""
-    matches = scan(text, get_glossary())
+    try:
+        matches = scan(text, get_glossary())
+    except GlossaryConflictError as exc:
+        raise ToolError(str(exc)) from exc
     result = LookupResult(
         matches=matches,
         glossary_block=format_glossary_block(matches),

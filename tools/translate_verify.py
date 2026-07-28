@@ -8,10 +8,11 @@ tool independently testable and keeps the retry policy out of an MCP schema.
 from typing import Any
 
 from contracts.tools import VerifyResult
+from glossary.loader import GlossaryConflictError
 from glossary.matcher import hit_rate, match_terms, missed_terms
 from glossary.runtime import get_glossary
 from glossary.scanner import scan
-from tools.base import ToolSpec, object_schema
+from tools.base import ToolError, ToolSpec, object_schema
 
 # The offline experiment left 1-3% of terms unhit, all of them in sentence-level
 # items where surrounding context pulls the model off the glossary. This tool is
@@ -33,7 +34,11 @@ def _run(arguments: dict[str, Any]) -> dict[str, Any]:
     translation = arguments.get("translation") or ""
     glossary = get_glossary()
 
-    verdicts = match_terms(translation, scan(source, glossary), glossary)
+    try:
+        terms = scan(source, glossary)
+    except GlossaryConflictError as exc:
+        raise ToolError(str(exc)) from exc
+    verdicts = match_terms(translation, terms, glossary)
     result = VerifyResult(
         results=verdicts,
         hit_rate=hit_rate(verdicts),
