@@ -19,6 +19,7 @@ it. `prompts.py` therefore imports `contracts` and nothing else, forever.
 
 | Module | Responsibility | Not responsible for |
 |---|---|---|
+| `config.py` | Load `.env` into the environment, at entry points only | Deciding what any variable means |
 | `gateway.py` | OpenAI-compatible chat completions over HTTP | Tool semantics |
 | `bridge.py` | MCP tool schema ↔ OpenAI `tools` format | Business meaning |
 | `mcp_client.py` | Spawn `server.py` over stdio, list/call tools | Choosing tools |
@@ -193,9 +194,27 @@ mcp-agent --json --gateway fake "現在幾點"
 server, which is what makes the demo runnable with no gateway credentials.
 `--json` emits the whole `RunResult` for scripted checks.
 
----
+### 8.1 Configuration loading
 
-## 9. Acceptance
+`cli.py` calls `config.load_env_file()` before anything reads `os.environ`, and
+`evals/run_eval.py` does the same. `--env-file` points elsewhere.
+
+Three rules, each with a reason:
+
+1. **Entry points only, never at import time.** A module that loaded `.env` on
+   import would leak a developer's gateway config into every test run, and the
+   `requires_gateway` tests would stop skipping and start making real network
+   calls. Asserted by `tests/test_config.py`.
+2. **An exported variable wins over the file.** Explicit beats ambient.
+3. **An exported-but-*empty* variable does not win.** `HTTPGateway.configured()`
+   is `bool(os.environ.get(...))`, so the rest of the system already reads empty
+   as unset; a shell that exports `GATEWAY_BASE_URL=` must not shadow a good
+   `.env` and reproduce "it is set but the program says it isn't".
+
+**A missing configuration must say why it is missing.** The original error —
+`GATEWAY_BASE_URL is not set` printed while a filled-in `.env` sat in the
+repository root — gave no way to discover that nothing ever read the file. The
+message now names the file it read, or the path it looked for and did not find.
 
 `tests/test_bridge.py`, `test_prompts.py`, `test_gateway.py`, `test_loop.py`,
 and acceptance criteria **2, 3, 4, 5, 8, 9, 11, 12**.

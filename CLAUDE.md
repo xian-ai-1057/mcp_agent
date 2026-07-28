@@ -33,6 +33,12 @@ check. Do not add an import to `prompts.py` to make something convenient.
   between the two is invisible until it reaches users.
 - **stdout is the MCP JSON-RPC channel.** Anything in `server.py` or `tools/`
   that writes to stdout corrupts the protocol. Log to stderr.
+- **`.env` is loaded at entry points only** — `agent/cli.py` and
+  `evals/run_eval.py` call `agent.config.load_env_file`. Never load it at module
+  import time: a developer's local gateway config would leak into every test
+  run, and the `requires_gateway` tests would stop skipping and start making
+  real network calls. `tests/test_config.py` asserts that importing the agent
+  modules adds nothing to `os.environ`.
 - **Scanner order is the algorithm.** `Glossary.scan_pattern` is an alternation
   sorted longest-surface-first; that sort is what produces longest-match-first
   semantics. Do not "tidy" it into alphabetical order.

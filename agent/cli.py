@@ -7,6 +7,9 @@
 `--gateway fake` runs the rule-based double end to end through the real MCP
 server and the real tools, which is what makes the demo runnable with no gateway
 credentials. It proves the plumbing, not the model.
+
+Configuration comes from `.env` (loaded here, at the entry point) or from
+exported variables, which win over the file.
 """
 
 import argparse
@@ -15,7 +18,9 @@ import json
 import logging
 import os
 import sys
+from pathlib import Path
 
+from agent.config import describe_env_source, load_env_file
 from agent.gateway import Gateway, GatewayError, HTTPGateway
 from agent.loop import AgentLoop
 from agent.mcp_client import MCPToolClient
@@ -40,15 +45,24 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--max-turns", type=int, default=None, help="Override the turn budget.")
     parser.add_argument("--no-self-check", action="store_true", help="Disable re-translation.")
     parser.add_argument("--verbose", "-v", action="store_true", help="Log tool calls to stderr.")
+    parser.add_argument(
+        "--env-file",
+        type=Path,
+        default=None,
+        help="Env file to load. Defaults to .env in the repository root.",
+    )
     return parser
 
 
-def _make_gateway(choice: str) -> Gateway:
+def _make_gateway(choice: str, env_source: Path | None) -> Gateway:
     if choice == "fake":
         return RuleBasedGateway()
     if not HTTPGateway.configured():
         raise GatewayError(
-            "GATEWAY_BASE_URL is not set. Configure it (see .env.example), or run with --gateway fake."
+            "GATEWAY_BASE_URL is not set —— "
+            f"{describe_env_source(env_source)}。\n"
+            "  設定方式：把 GATEWAY_BASE_URL 寫進 .env（見 .env.example），"
+            "或直接 export，或改用 --gateway fake（不需要憑證）。"
         )
     return HTTPGateway.from_env()
 
@@ -101,8 +115,13 @@ async def amain(argv: list[str] | None = None) -> int:
         format="%(levelname)s %(name)s: %(message)s",
     )
 
+    # Before anything reads os.environ. The MCP server is spawned as a child and
+    # inherits this environment, so GLOSSARY_CSV and WEATHER_PROVIDER from the
+    # file reach the tools too.
+    env_source = load_env_file(args.env_file)
+
     try:
-        gateway = _make_gateway(args.gateway)
+        gateway = _make_gateway(args.gateway, env_source)
     except GatewayError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2

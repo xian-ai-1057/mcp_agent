@@ -16,6 +16,10 @@ cp .env.example .env   # 填入 GATEWAY_BASE_URL / GATEWAY_API_KEY / GATEWAY_MOD
 .venv/bin/python -m agent.cli "請幫我翻譯：客戶申請提高臨時額度"
 ```
 
+`.env` 由進入點（`agent/cli.py`、`evals/run_eval.py`）載入，MCP server 是子行程會繼承，
+所以 `GLOSSARY_CSV`、`WEATHER_PROVIDER` 也一併生效。**已 export 的環境變數優先於檔案**
+（空字串視同未設定）。要用別的檔案就 `--env-file path/to/other.env`。
+
 ```
 Regarding the request: temporary credit limit.
 [turns=2 tool_calls=1 tools=lookup_terms retranslations=0 stop=completed]
