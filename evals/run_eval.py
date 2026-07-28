@@ -25,6 +25,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from agent.config import describe_env_source, load_env_file
 from agent.gateway import Gateway, GatewayError, HTTPGateway
 from agent.loop import AgentLoop
 from agent.mcp_client import MCPToolClient
@@ -88,13 +89,15 @@ async def run_suite(loop: AgentLoop, cases: list[dict[str, Any]]) -> Report:
     return summarize(records)
 
 
-def _make_gateway(choice: str) -> Gateway:
+def _make_gateway(choice: str, env_source: Path | None) -> Gateway:
     if choice == "fake":
         return RuleBasedGateway()
     if not HTTPGateway.configured():
         raise GatewayError(
-            "GATEWAY_BASE_URL is not set — no model to evaluate. "
-            "Configure it (see .env.example), or pass --gateway fake to exercise the harness itself."
+            "GATEWAY_BASE_URL is not set —— 沒有模型可以評測（"
+            f"{describe_env_source(env_source)}）。\n"
+            "  設定方式：把 GATEWAY_BASE_URL 寫進 .env（見 .env.example），或直接 export。\n"
+            "  若只是想確認 harness 本身能跑，用 --gateway fake（那不是對模型的評測）。"
         )
     return HTTPGateway.from_env()
 
@@ -105,10 +108,18 @@ async def amain(argv: list[str] | None = None) -> int:
     parser.add_argument("--gateway", choices=("http", "fake"), default="http")
     parser.add_argument("--out", type=Path, default=None, help="Write the JSON report here.")
     parser.add_argument("--limit", type=int, default=None, help="Cap cases per suite.")
+    parser.add_argument(
+        "--env-file",
+        type=Path,
+        default=None,
+        help="Env file to load. Defaults to .env in the repository root.",
+    )
     args = parser.parse_args(argv)
 
+    env_source = load_env_file(args.env_file)
+
     try:
-        gateway = _make_gateway(args.gateway)
+        gateway = _make_gateway(args.gateway, env_source)
     except GatewayError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
