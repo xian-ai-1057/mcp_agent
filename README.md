@@ -4,7 +4,7 @@
 迴圈；翻譯、一般工具與 RAG 上傳分別由獨立 MCP server 提供。
 
 ```text
-CLI / future HTTP or chat adapter
+CLI / FastAPI / HTML test bench
               │
         generic AgentLoop
               │ ToolRunner
@@ -36,6 +36,51 @@ python -m venv .venv
 cp .env.example .env
 .venv/bin/python -m agent.cli "你的問題"
 ```
+
+## FastAPI 與網頁測試介面
+
+專案內附一個只綁定本機的單次執行工作台，可直接查看回答、工具呼叫、回合數與術語驗證結果：
+
+```bash
+.venv/bin/python -m agent.web
+# 瀏覽器開啟 http://127.0.0.1:8000
+# Swagger UI: http://127.0.0.1:8000/docs
+
+# 也可交給 Uvicorn 載入 ASGI app；此路徑需明確提供 env file
+.venv/bin/uvicorn --env-file .env agent.web:app --host 127.0.0.1 --port 8000
+```
+
+頁面預設使用不需憑證的 `fake` gateway，適合先驗證 agent → MCP → tool 的完整線路；
+若 `.env` 已設定 `GATEWAY_BASE_URL`，也可在頁面切換成真實的 OpenAI-compatible gateway。
+每次送出都是獨立測試，不會保留前一次輸入的對話上下文。可用 `--port` 更換連接埠，或以
+`--mcp-config` 載入自訂的 MCP server 組合。
+
+其他應用可呼叫版本化 API；`fake` 不需憑證，`http` 則使用伺服器端 `.env`，API key 不會送到
+呼叫端：
+
+```bash
+curl -s http://127.0.0.1:8000/api/v1/runs \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "text": "現在台北幾點？",
+    "gateway": "fake",
+    "profile": "generic",
+    "max_turns": 6
+  }'
+```
+
+主要接口：
+
+| Method | Path | 用途 |
+|---|---|---|
+| `POST` | `/api/v1/runs` | 執行一次獨立 agent run，回傳 run ID、耗時與完整 `RunResult` |
+| `GET` | `/api/v1/capabilities` | 查看 gateway 狀態、profiles 與 MCP 工具名稱 |
+| `GET` | `/healthz` | readiness probe |
+| `GET` | `/docs` | Swagger UI；`/openapi.json` 可用來產生 client SDK |
+
+跨來源瀏覽器前端可重複傳入 `--cors-origin https://app.example.com`，或設定逗號分隔的
+`AGENT_CORS_ORIGINS`；server-to-server 呼叫不需要 CORS。這個測試服務沒有登入驗證，因此 CLI
+只允許綁定 loopback。若要讓其他主機存取，應在前方加入具驗證與 TLS 的 API gateway／反向代理。
 
 通用 profile 是預設值。它仍能看見已連線 MCP server 的工具，但不把任何翻譯規則寫死在
 Agent core。`--profile translation` 是一個可選 capability：增加翻譯 prompt 與術語驗證 policy。
@@ -180,12 +225,12 @@ SPEC = ToolSpec(
 
 ## 相依與封裝
 
-直接相依的最低版本已對齊 2026-07-28 官方 PyPI 最新穩定版：MCP Python SDK 1.28.1、
-Pydantic 2.13.4、HTTPX 0.28.1、python-dotenv 1.2.2。MCP 明確限制 `<2`，因 v2 目前仍是
-alpha，不能當 production stable 使用。
+直接相依的最低版本已對齊 2026-07-28 官方 PyPI 最新穩定版：FastAPI 0.140.7、
+Uvicorn 0.51.0、MCP Python SDK 1.28.1、Pydantic 2.13.4、HTTPX 0.28.1 與
+python-dotenv 1.2.2。MCP 明確限制 `<2`，因 v2 目前仍是 alpha，不能當 production stable 使用。
 
-`data/glossary.csv` 與 eval fixtures 都是 package data；測試會實際 build wheel、安裝到隔離
-目錄並讀取 glossary，避免 source checkout 可跑、wheel 卻壞掉。
+`data/glossary.csv`、eval fixtures 與 HTML test bench 都是 package data；測試會實際 build
+wheel、安裝到隔離目錄並讀取資產，避免 source checkout 可跑、wheel 卻壞掉。
 
 ## 測試
 
@@ -202,6 +247,7 @@ fake 結果冒充模型準確率。
 ## 已知限制
 
 - interactive CLI 尚未保存跨輸入的 conversation session。
+- FastAPI 的每個 request 也是獨立 run，尚未提供 conversation/session API 或 streaming。
 - 尚未支援 streaming、Streamable HTTP MCP、tenant/principal/scopes 與通用 approval hook。
 - RAG 本次只有安全上傳 adapter；retrieval/rerank/citation 應另做 MCP capability。
 - `data/glossary.csv` 是 sample，不是正式術語資產。

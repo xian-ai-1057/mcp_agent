@@ -6,7 +6,7 @@ legacy `server.py`。目前 production entry path 是設定驅動的多 MCP 架�
 
 ```mermaid
 flowchart TD
-    UI["CLI / future HTTP or chat adapter"] --> CORE["generic AgentLoop<br/>gateway + budgets + policy hooks"]
+    UI["CLI / FastAPI / HTML test bench"] --> CORE["generic AgentLoop<br/>gateway + budgets + policy hooks"]
     CORE --> POOL["MCPToolPool<br/>config + names + timeout + env isolation"]
     POOL --> UTIL["utilities MCP<br/>hello / time / weather"]
     POOL --> TRANS["translation MCP<br/>lookup / verify"]
@@ -98,7 +98,8 @@ flowchart TD
 
 | 層 | 模組 | 負責 | 明確不負責 |
 |---|---|---|---|
-| **agent/** | `cli.py` | 參數解析、輸出渲染 | 其他所有事 |
+| **agent/** | `cli.py` | CLI 參數解析、輸出渲染 | 其他所有事 |
+| | `web.py` | FastAPI lifespan、HTTP 契約、HTML test bench | Agent／工具業務邏輯 |
 | | `loop.py` | 多輪編排、回合上限、自檢決策 | 工具內部行為 |
 | | `gateway.py` | OpenAI 相容呼叫、格式差異吸收 | 工具語意 |
 | | `bridge.py` | MCP schema ↔ OpenAI tools 格式 | 業務語意 |

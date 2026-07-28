@@ -8,10 +8,12 @@ version = "0.4.0"
 description = "Configurable general-purpose agent host for isolated MCP capability servers"
 requires-python = ">=3.11"
 dependencies = [
+    "fastapi>=0.140.7,<1",
     "mcp>=1.28.1,<2",
     "pydantic>=2.13.4,<3",
     "httpx>=0.28.1,<1",
     "python-dotenv>=1.2.2,<2",
+    "uvicorn>=0.51.0,<1",
 ]
 
 [project.optional-dependencies]
@@ -25,6 +27,7 @@ dev = [
 
 [project.scripts]
 mcp-agent = "agent.cli:main"
+mcp-agent-web = "agent.web:main"
 mcp-agent-utilities = "mcp_servers.utilities:main"
 mcp-agent-translation = "mcp_servers.translation:main"
 mcp-agent-rag-upload = "mcp_servers.rag_upload.server:main"
@@ -48,6 +51,7 @@ include = [
 exclude = ["tests*"]
 
 [tool.setuptools.package-data]
+agent = ["static/*.html"]
 data = ["glossary.csv"]
 fixtures = ["*.json"]
 
