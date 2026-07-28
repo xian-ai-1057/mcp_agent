@@ -250,15 +250,83 @@ class TestHTTPGateway:
         with pytest.raises(GatewayError, match="GATEWAY_BASE_URL"):
             HTTPGateway(base_url="", api_key="", model="m")
 
-    def test_plain_http_is_allowed_only_for_loopback(self):
-        with pytest.raises(GatewayError, match="HTTPS"):
-            HTTPGateway(base_url="http://gateway.example/v1", api_key="secret", model="m")
+    def test_plain_http_requires_loopback_or_explicit_opt_in(self, caplog):
+        for base_url in (
+            "http://gateway.example/v1",
+            "http://192.168.10.20:8000/v1",
+        ):
+            with pytest.raises(GatewayError, match="GATEWAY_ALLOW_INSECURE_HTTP"):
+                HTTPGateway(base_url=base_url, api_key="secret", model="m")
         gateway = HTTPGateway(base_url="http://127.0.0.1:8000/v1", api_key="secret", model="m")
         assert gateway.base_url.startswith("http://127.0.0.1")
+
+        with caplog.at_level("WARNING", logger="agent.gateway"):
+            gateway = HTTPGateway(
+                base_url="http://gateway.example/v1",
+                api_key="secret",
+                model="m",
+                allow_insecure_http=True,
+            )
+        assert gateway.base_url == "http://gateway.example/v1"
+        assert "unencrypted HTTP" in caplog.text
+        assert "secret" not in caplog.text
+
+    @pytest.mark.parametrize("value", ["true", 1])
+    def test_constructor_requires_a_real_boolean_opt_in(self, value):
+        with pytest.raises(GatewayError, match="must be a boolean"):
+            HTTPGateway(
+                base_url="http://gateway.example/v1",
+                api_key="secret",
+                model="m",
+                allow_insecure_http=value,
+            )
+
+    def test_insecure_http_opt_in_never_allows_another_scheme(self):
+        with pytest.raises(GatewayError, match="HTTP or HTTPS"):
+            HTTPGateway(
+                base_url="ftp://gateway.example/v1",
+                api_key="secret",
+                model="m",
+                allow_insecure_http=True,
+            )
+
+    @pytest.mark.parametrize("value", ["true", "1", "yes", "on", " TRUE "])
+    def test_insecure_http_can_be_enabled_from_the_environment(
+        self, monkeypatch, value
+    ):
+        monkeypatch.setenv("GATEWAY_BASE_URL", "http://gateway.example/v1")
+        monkeypatch.setenv("GATEWAY_ALLOW_INSECURE_HTTP", value)
+        gateway = HTTPGateway.from_env()
+        assert gateway.base_url == "http://gateway.example/v1"
+
+    @pytest.mark.parametrize("value", ["false", "0", "no", "off"])
+    def test_false_insecure_http_values_keep_the_https_requirement(
+        self, monkeypatch, value
+    ):
+        monkeypatch.setenv("GATEWAY_BASE_URL", "http://gateway.example/v1")
+        monkeypatch.setenv("GATEWAY_ALLOW_INSECURE_HTTP", value)
+        with pytest.raises(GatewayError, match="GATEWAY_ALLOW_INSECURE_HTTP"):
+            HTTPGateway.from_env()
+
+    def test_invalid_insecure_http_setting_is_rejected(self, monkeypatch):
+        monkeypatch.setenv("GATEWAY_BASE_URL", "https://gateway.example/v1")
+        monkeypatch.setenv("GATEWAY_ALLOW_INSECURE_HTTP", "sometimes")
+        with pytest.raises(GatewayError, match="must be true or false"):
+            HTTPGateway.from_env()
 
     def test_invalid_port_is_rejected_at_construction(self):
         with pytest.raises(GatewayError, match="valid port"):
             HTTPGateway(base_url="https://gateway.example:not-a-port/v1", api_key="", model="m")
+
+    @pytest.mark.parametrize("timeout", [0, -1, float("nan"), float("inf")])
+    def test_timeout_must_be_positive_and_finite(self, timeout):
+        with pytest.raises(GatewayError, match="positive finite"):
+            HTTPGateway(
+                base_url="https://gateway.example/v1",
+                api_key="",
+                model="m",
+                timeout=timeout,
+            )
 
     async def test_invalid_url_from_http_client_is_normalized(self):
         def handler(request):
@@ -278,6 +346,28 @@ class TestHTTPGateway:
 
     def test_configured_reads_the_environment(self, monkeypatch):
         monkeypatch.delenv("GATEWAY_BASE_URL", raising=False)
+        monkeypatch.delenv("GATEWAY_ALLOW_INSECURE_HTTP", raising=False)
         assert HTTPGateway.configured() is False
+        assert HTTPGateway.present() is False
+
         monkeypatch.setenv("GATEWAY_BASE_URL", "https://gateway.example/v1")
         assert HTTPGateway.configured() is True
+        assert HTTPGateway.present() is True
+
+    def test_configured_requires_a_valid_insecure_http_opt_in(self, monkeypatch):
+        monkeypatch.setenv("GATEWAY_BASE_URL", "http://gateway.example/v1")
+        monkeypatch.delenv("GATEWAY_ALLOW_INSECURE_HTTP", raising=False)
+        assert HTTPGateway.present() is True
+        assert HTTPGateway.configured() is False
+
+        monkeypatch.setenv("GATEWAY_ALLOW_INSECURE_HTTP", "true")
+        assert HTTPGateway.configured() is True
+
+        monkeypatch.setenv("GATEWAY_ALLOW_INSECURE_HTTP", "invalid")
+        assert HTTPGateway.configured() is False
+
+    @pytest.mark.parametrize("timeout", ["not-a-number", "0", "nan", "inf"])
+    def test_configured_rejects_invalid_timeouts(self, monkeypatch, timeout):
+        monkeypatch.setenv("GATEWAY_BASE_URL", "https://gateway.example/v1")
+        monkeypatch.setenv("GATEWAY_TIMEOUT", timeout)
+        assert HTTPGateway.configured() is False

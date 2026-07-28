@@ -33,7 +33,7 @@ def load_env_file(path: str | Path | None = None, override: bool = False) -> Pat
     do what it says even when `.env` names a different model.
 
     An exported-but-**empty** variable does not win, because the rest of the
-    application already treats empty as unset — `HTTPGateway.configured()` is
+    application already treats empty as unset — `HTTPGateway.present()` is
     `bool(os.environ.get(...))`. A shell that exports `GATEWAY_BASE_URL=` would
     otherwise shadow a perfectly good `.env` and produce exactly the "it is set
     but the program says it isn't" confusion this module exists to remove.

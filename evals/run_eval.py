@@ -97,7 +97,7 @@ async def run_suite(loop: AgentLoop, cases: list[dict[str, Any]]) -> Report:
 def _make_gateway(choice: str, env_source: Path | None) -> Gateway:
     if choice == "fake":
         return RuleBasedGateway()
-    if not HTTPGateway.configured():
+    if not HTTPGateway.present():
         raise GatewayError(
             "GATEWAY_BASE_URL is not set —— 沒有模型可以評測（"
             f"{describe_env_source(env_source)}）。\n"

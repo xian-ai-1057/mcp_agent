@@ -183,6 +183,7 @@ class TestRunAPI:
             {"text": "hello", "max_turns": 21},
             {"text": "hello", "gateway": "unknown"},
             {"text": "hello", "profile": "unknown"},
+            {"text": "hello", "allow_insecure_http": True},
             {"text": "hello", "unexpected": "field"},
         ],
     )
@@ -256,6 +257,41 @@ class TestRunAPI:
         )
         assert response.status_code == 503
         assert response.json()["error"]["code"] == "gateway_not_configured"
+
+    def test_invalid_http_gateway_is_not_advertised(self, client, monkeypatch):
+        monkeypatch.setenv("GATEWAY_BASE_URL", "http://gateway.example/v1")
+        monkeypatch.delenv("GATEWAY_ALLOW_INSECURE_HTTP", raising=False)
+
+        capabilities = client.get("/api/v1/capabilities")
+        response = client.post(
+            "/api/v1/runs",
+            json={"text": "hello", "gateway": "http"},
+        )
+
+        assert capabilities.json()["http_gateway_configured"] is False
+        assert response.status_code == 500
+        assert response.json()["error"]["code"] == "configuration_error"
+
+    def test_insecure_http_gateway_opt_in_is_shared_by_the_web_api(
+        self, client, monkeypatch
+    ):
+        monkeypatch.setenv("GATEWAY_BASE_URL", "http://gateway.example/v1")
+        monkeypatch.setenv("GATEWAY_ALLOW_INSECURE_HTTP", "true")
+
+        async def complete(gateway, messages, tools=None, tool_choice="auto"):
+            return AssistantTurn(content="HTTP gateway reached")
+
+        monkeypatch.setattr(web_module.HTTPGateway, "complete", complete)
+
+        capabilities = client.get("/api/v1/capabilities")
+        response = client.post(
+            "/api/v1/runs",
+            json={"text": "hello", "gateway": "http"},
+        )
+
+        assert capabilities.json()["http_gateway_configured"] is True
+        assert response.status_code == 200
+        assert response.json()["result"]["output"] == "HTTP gateway reached"
 
 
 class BrokenGateway:

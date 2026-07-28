@@ -72,7 +72,7 @@ class TestLoadEnvFile:
         assert os.environ["GATEWAY_MODEL"] == "from-file"
 
     def test_an_exported_but_empty_variable_does_not_win(self, env_file, monkeypatch):
-        """Empty means unset, consistently with `HTTPGateway.configured()`.
+        """Empty means unset, consistently with `HTTPGateway.present()`.
 
         A shell that exports `GATEWAY_BASE_URL=` would otherwise shadow a
         perfectly good `.env` and reproduce the original confusion — set in the

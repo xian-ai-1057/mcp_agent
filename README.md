@@ -37,6 +37,11 @@ cp .env.example .env
 .venv/bin/python -m agent.cli "你的問題"
 ```
 
+模型 gateway 預設必須使用 HTTPS；同機的 `http://127.0.0.1`／`http://localhost` 可直接使用。
+若受控的開發或內網 gateway 只有 HTTP，可在 server 端明確設定
+`GATEWAY_ALLOW_INSECURE_HTTP=true`。啟用後 API key、prompt、工具 schema 與結果都會以明文傳輸，
+因此不應用於不受信任的網路，也不能由 API request 動態開啟。
+
 ## FastAPI 與網頁測試介面
 
 專案內附一個只綁定本機的單次執行工作台，可直接查看回答、工具呼叫、回合數與術語驗證結果：

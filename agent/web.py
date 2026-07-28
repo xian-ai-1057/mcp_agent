@@ -275,7 +275,7 @@ class AgentService:
     def _default_gateway(choice: GatewayMode) -> Gateway:
         if choice is GatewayMode.FAKE:
             return RuleBasedGateway()
-        if not HTTPGateway.configured():
+        if not HTTPGateway.present():
             raise AgentAPIError(
                 503,
                 "gateway_not_configured",
