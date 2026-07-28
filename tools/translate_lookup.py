@@ -2,7 +2,7 @@
 
 from typing import Any
 
-from agent.prompts import format_glossary_block
+from capabilities.translation.prompts import format_glossary_block
 from contracts.tools import LookupResult
 from glossary.runtime import get_glossary
 from glossary.scanner import scan

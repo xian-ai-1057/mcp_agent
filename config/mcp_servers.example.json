@@ -1,0 +1,30 @@
+{
+  "servers": [
+    {
+      "name": "utilities",
+      "command": "{python}",
+      "args": ["-m", "mcp_servers.utilities"],
+      "inherit_env": ["WEATHER_PROVIDER"]
+    },
+    {
+      "name": "translation",
+      "command": "{python}",
+      "args": ["-m", "mcp_servers.translation"],
+      "inherit_env": ["GLOSSARY_CSV"]
+    },
+    {
+      "name": "rag-upload",
+      "command": "{python}",
+      "args": ["-m", "mcp_servers.rag_upload"],
+      "inherit_env": [
+        "RAG_UPLOAD_BASE_URL",
+        "RAG_UPLOAD_ALLOWED_ROOTS",
+        "RAG_UPLOAD_ALLOWED_KB_NAMES",
+        "RAG_UPLOAD_MAX_BYTES",
+        "RAG_UPLOAD_TIMEOUT_SECONDS",
+        "RAG_UPLOAD_BEARER_TOKEN",
+        "RAG_UPLOAD_ALLOW_ARCHIVES"
+      ]
+    }
+  ]
+}

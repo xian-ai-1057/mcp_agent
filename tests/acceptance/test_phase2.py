@@ -4,9 +4,10 @@ import asyncio
 
 import pytest
 
-from agent.loop import AgentLoop, TranslationSelfCheck
+from agent.loop import AgentLoop
 from agent.mcp_client import LocalToolRunner
 from agent.testing import RuleBasedGateway
+from capabilities.translation.policy import TranslationSelfCheck
 from contracts.tools import Verdict
 from glossary.matcher import match_terms
 from glossary.scanner import scan
@@ -52,7 +53,9 @@ class TestCriterion8RetranslationRaisesHitRate:
         repairs = 0
         for case in cases:
             loop = AgentLoop(
-                RuleBasedGateway(glossary_fidelity=PARTIAL_FIDELITY, repair_fidelity=1.0), runner
+                RuleBasedGateway(glossary_fidelity=PARTIAL_FIDELITY, repair_fidelity=1.0),
+                runner,
+                self_check=TranslationSelfCheck(),
             )
             result = await loop.run(case["text"])
             hits, total = measure(result.output, case["text"], glossary)
@@ -73,7 +76,9 @@ class TestCriterion8RetranslationRaisesHitRate:
         """Repair must be driven by the verdict, not run unconditionally."""
         runner = LocalToolRunner(all_specs)
         for case in cases[:5]:
-            result = await AgentLoop(RuleBasedGateway(), runner).run(case["text"])
+            result = await AgentLoop(
+                RuleBasedGateway(), runner, self_check=TranslationSelfCheck()
+            ).run(case["text"])
             assert result.verify.hit_rate == 1.0
             assert result.metrics.retranslations == 0
 
@@ -96,7 +101,9 @@ class TestCriterion9RetranslationCap:
 
     async def test_it_terminates_rather_than_hanging(self, all_specs):
         gateway = RuleBasedGateway(glossary_fidelity=0.0, repair_fidelity=0.0)
-        loop = AgentLoop(gateway, LocalToolRunner(all_specs))
+        loop = AgentLoop(
+            gateway, LocalToolRunner(all_specs), self_check=TranslationSelfCheck()
+        )
         # If the cap were missing this never returns; the timeout is the assertion.
         result = await asyncio.wait_for(loop.run("請翻譯：臨時額度"), timeout=15)
         assert result.metrics.retranslations == TranslationSelfCheck().max_retranslate
@@ -105,7 +112,9 @@ class TestCriterion9RetranslationCap:
         gateway = RuleBasedGateway(glossary_fidelity=0.0, repair_fidelity=1.0)
         monkeypatch.setattr(gateway, "_repair", lambda prompt: "")
 
-        loop = AgentLoop(gateway, LocalToolRunner(all_specs))
+        loop = AgentLoop(
+            gateway, LocalToolRunner(all_specs), self_check=TranslationSelfCheck()
+        )
         result = await asyncio.wait_for(loop.run("請翻譯：臨時額度"), timeout=15)
         assert result.metrics.retranslations == 0
         assert result.output

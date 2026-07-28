@@ -1,11 +1,15 @@
 """Unit tests for `agent.loop` (spec 003 §5)."""
 
+import os
+from pathlib import Path
+
 import pytest
 
 from agent.gateway import AssistantTurn, ToolCall
-from agent.loop import AgentLoop, TranslationSelfCheck
+from agent.loop import AgentLoop
 from agent.mcp_client import LocalToolRunner
 from agent.testing import RuleBasedGateway, ScriptedGateway
+from capabilities.translation.policy import TranslationSelfCheck
 from contracts.agent import Initiator, StopReason
 from tools.base import ToolSpec, object_schema
 
@@ -25,6 +29,12 @@ def call(name, arguments=None, call_id="c1"):
 
 
 class TestBasicLoop:
+    def test_core_has_no_translation_or_glossary_import(self):
+        source = Path("agent/loop.py").read_text(encoding="utf-8")
+        assert "capabilities.translation" not in source
+        assert "contracts.tools" not in source
+        assert "glossary" not in source
+
     async def test_plain_answer_uses_one_turn_and_no_tools(self, runner):
         gateway = ScriptedGateway([AssistantTurn(content="42")])
         result = await AgentLoop(gateway, runner, self_check=None).run("問題")
@@ -34,6 +44,35 @@ class TestBasicLoop:
         assert result.metrics.tool_calls == 0
         assert result.metrics.called_any_tool is False
         assert result.metrics.stop_reason is StopReason.COMPLETED
+
+    @pytest.mark.parametrize(
+        ("turn", "expected_output", "expected_reason"),
+        [
+            (
+                AssistantTurn(content="partial", finish_reason="length"),
+                "partial",
+                StopReason.LENGTH_LIMIT,
+            ),
+            (
+                AssistantTurn(content="", finish_reason="content_filter"),
+                "",
+                StopReason.CONTENT_FILTER,
+            ),
+            (
+                AssistantTurn(refusal="cannot comply", finish_reason="stop"),
+                "cannot comply",
+                StopReason.REFUSED,
+            ),
+        ],
+    )
+    async def test_non_successful_model_stops_are_not_marked_completed(
+        self, runner, turn, expected_output, expected_reason
+    ):
+        result = await AgentLoop(
+            ScriptedGateway([turn]), runner, self_check=None
+        ).run("問題")
+        assert result.output == expected_output
+        assert result.metrics.stop_reason is expected_reason
 
     async def test_one_tool_call_then_an_answer(self, runner):
         gateway = ScriptedGateway([call("get_time"), AssistantTurn(content="現在是中午")])
@@ -130,6 +169,11 @@ class TestFailureHandling:
 
 
 class TestTurnBudget:
+    @pytest.mark.parametrize("value", [0, -1, True, "six"])
+    def test_invalid_turn_budget_is_rejected(self, runner, value):
+        with pytest.raises(ValueError, match="max_turns"):
+            AgentLoop(RuleBasedGateway(), runner, max_turns=value)
+
     async def test_max_turns_stops_a_model_that_only_calls_tools(self, runner):
         gateway = ScriptedGateway([call("get_time", call_id=f"c{i}") for i in range(20)])
         result = await AgentLoop(gateway, runner, max_turns=4, self_check=None).run("幾點了")
@@ -154,7 +198,9 @@ class TestNoToolRun:
     async def test_a_model_that_ignores_tools_completes_and_is_counted(self, runner):
         """Not an error. The plan refuses to assume tool use, so it is measured."""
         gateway = RuleBasedGateway(use_tools=False)
-        result = await AgentLoop(gateway, runner).run("請幫我翻譯：客戶申請提高臨時額度")
+        result = await AgentLoop(
+            gateway, runner, self_check=TranslationSelfCheck()
+        ).run("請幫我翻譯：客戶申請提高臨時額度")
 
         assert result.output
         assert result.metrics.called_any_tool is False
@@ -164,6 +210,11 @@ class TestNoToolRun:
 
 
 class TestSelfCheckPolicy:
+    @pytest.mark.parametrize("value", [-1, True, "two"])
+    def test_invalid_retranslation_budget_is_rejected(self, value):
+        with pytest.raises(ValueError, match="max_retranslate"):
+            TranslationSelfCheck(max_retranslate=value)
+
     def test_applies_only_when_lookup_ran_and_verify_exists(self):
         policy = TranslationSelfCheck()
         both = {"lookup_terms", "verify_translation", "get_time"}
@@ -171,14 +222,79 @@ class TestSelfCheckPolicy:
         assert policy.applies({"get_time"}, both) is False
         assert policy.applies({"lookup_terms"}, {"lookup_terms", "get_time"}) is False
 
+    def test_applies_to_a_uniquely_namespaced_translation_server(self):
+        policy = TranslationSelfCheck()
+        available = {
+            "translation__lookup_terms",
+            "translation__verify_translation",
+            "utilities__get_time",
+        }
+        assert policy.applies({"translation__lookup_terms"}, available) is True
+
+        ambiguous = available | {
+            "other__lookup_terms",
+            "other__verify_translation",
+        }
+        assert policy.applies({"translation__lookup_terms"}, ambiguous) is False
+
+        mismatched = {
+            "alpha__lookup_terms",
+            "beta__verify_translation",
+        }
+        assert policy.applies({"alpha__lookup_terms"}, mismatched) is False
+
+    async def test_namespaced_translation_tools_are_verified(self, all_specs):
+        lookup = all_specs["lookup_terms"]
+        verify = all_specs["verify_translation"]
+        specs = {
+            "translation__lookup_terms": ToolSpec(
+                name="translation__lookup_terms",
+                description=lookup.description,
+                input_schema=lookup.input_schema,
+                handler=lookup.handler,
+            ),
+            "translation__verify_translation": ToolSpec(
+                name="translation__verify_translation",
+                description=verify.description,
+                input_schema=verify.input_schema,
+                handler=verify.handler,
+            ),
+        }
+        gateway = ScriptedGateway(
+            [
+                call(
+                    "translation__lookup_terms",
+                    {"text": "請翻譯：臨時額度"},
+                ),
+                AssistantTurn(content="temporary credit limit"),
+            ]
+        )
+
+        result = await AgentLoop(
+            gateway,
+            LocalToolRunner(specs),
+            self_check=TranslationSelfCheck(),
+        ).run("請翻譯：臨時額度")
+
+        assert result.verify is not None
+        assert result.verify.hit_rate == 1.0
+        assert [record.name for record in result.tool_calls] == [
+            "translation__lookup_terms",
+            "translation__verify_translation",
+        ]
+
     async def test_it_triggers_on_tool_use_not_on_wording(self, runner):
         """A request full of translation words but no lookup gets no self-check."""
         gateway = ScriptedGateway([call("get_time"), AssistantTurn(content="請幫我翻譯這句話")])
-        result = await AgentLoop(gateway, runner).run("請幫我翻譯：客戶申請提高臨時額度")
+        result = await AgentLoop(
+            gateway, runner, self_check=TranslationSelfCheck()
+        ).run("請幫我翻譯：客戶申請提高臨時額度")
         assert result.verify is None
 
     async def test_a_clean_translation_is_verified_but_not_retranslated(self, runner):
-        result = await AgentLoop(RuleBasedGateway(), runner).run("請翻譯：客戶申請提高臨時額度")
+        result = await AgentLoop(
+            RuleBasedGateway(), runner, self_check=TranslationSelfCheck()
+        ).run("請翻譯：客戶申請提高臨時額度")
 
         assert result.verify is not None
         assert result.verify.hit_rate == 1.0
@@ -186,7 +302,9 @@ class TestSelfCheckPolicy:
         assert "temporary credit limit" in result.output
 
     async def test_verify_calls_are_recorded_as_policy_not_model(self, runner):
-        result = await AgentLoop(RuleBasedGateway(), runner).run("請翻譯：客戶申請提高臨時額度")
+        result = await AgentLoop(
+            RuleBasedGateway(), runner, self_check=TranslationSelfCheck()
+        ).run("請翻譯：客戶申請提高臨時額度")
 
         initiators = {r.name: r.initiator for r in result.tool_calls}
         assert initiators["lookup_terms"] is Initiator.MODEL
@@ -197,7 +315,9 @@ class TestSelfCheckPolicy:
 
     async def test_a_dropped_term_is_repaired(self, runner):
         gateway = RuleBasedGateway(glossary_fidelity=0.0, repair_fidelity=1.0)
-        result = await AgentLoop(gateway, runner).run("請翻譯：外幣帳戶的牌告利率每日更新")
+        result = await AgentLoop(
+            gateway, runner, self_check=TranslationSelfCheck()
+        ).run("請翻譯：外幣帳戶的牌告利率每日更新")
 
         assert result.metrics.retranslations == 1
         assert result.verify.hit_rate == 1.0
@@ -214,7 +334,9 @@ class TestSelfCheckPolicy:
 
     async def test_repair_turns_offer_no_tools(self, runner):
         gateway = RuleBasedGateway(glossary_fidelity=0.0, repair_fidelity=1.0)
-        await AgentLoop(gateway, runner).run("請翻譯：外幣帳戶的牌告利率每日更新")
+        await AgentLoop(gateway, runner, self_check=TranslationSelfCheck()).run(
+            "請翻譯：外幣帳戶的牌告利率每日更新"
+        )
 
         repair_requests = [
             request
@@ -231,7 +353,9 @@ class TestSelfCheckPolicy:
         original_repair = gateway._repair
         monkeypatch.setattr(gateway, "_repair", lambda prompt: "Nothing useful at all.")
 
-        result = await AgentLoop(gateway, runner).run("請翻譯：外幣帳戶的牌告利率每日更新")
+        result = await AgentLoop(
+            gateway, runner, self_check=TranslationSelfCheck()
+        ).run("請翻譯：外幣帳戶的牌告利率每日更新")
         assert original_repair  # kept for clarity about what was replaced
         assert "foreign currency account" in result.output
         assert result.verify.hit_rate == 0.5
@@ -243,12 +367,76 @@ class TestSelfCheckPolicy:
         assert result.verify is None
         assert all(r.initiator is Initiator.MODEL for r in result.tool_calls)
 
+    async def test_failed_lookup_does_not_trigger_verification(self):
+        def fail_lookup(arguments):
+            raise RuntimeError("lookup unavailable")
+
+        verify_calls = []
+
+        def verify(arguments):
+            verify_calls.append(arguments)
+            return {"results": [], "hit_rate": 1.0, "missed": []}
+
+        specs = {
+            "lookup_terms": ToolSpec(
+                name="lookup_terms",
+                description="lookup",
+                input_schema=object_schema({"text": {"type": "string"}}, ["text"]),
+                handler=fail_lookup,
+            ),
+            "verify_translation": ToolSpec(
+                name="verify_translation",
+                description="verify",
+                input_schema=object_schema({}),
+                handler=verify,
+            ),
+        }
+        gateway = ScriptedGateway(
+            [
+                call("lookup_terms", {"text": "請翻譯"}),
+                AssistantTurn(content="術語服務失敗，無法翻譯。"),
+            ]
+        )
+        result = await AgentLoop(
+            gateway,
+            LocalToolRunner(specs),
+            self_check=TranslationSelfCheck(),
+        ).run("請翻譯")
+
+        assert result.tool_calls[0].ok is False
+        assert verify_calls == []
+        assert result.verify is None
+
+    async def test_repair_shares_the_total_model_turn_budget(self, runner):
+        gateway = RuleBasedGateway(glossary_fidelity=0.0, repair_fidelity=0.0)
+        result = await AgentLoop(
+            gateway,
+            runner,
+            max_turns=2,
+            self_check=TranslationSelfCheck(max_retranslate=5),
+        ).run("請翻譯：臨時額度")
+
+        assert len(gateway.requests) == 2
+        assert result.metrics.turns == 2
+        assert result.metrics.retranslations == 0
+
 
 class TestFromEnv:
+    def test_generic_default_has_no_capability_policy(self, runner):
+        loop = AgentLoop.from_env(RuleBasedGateway(), runner)
+        assert loop.self_check is None
+        assert loop.policies == ()
+
     def test_reads_the_budgets(self, runner, monkeypatch):
         monkeypatch.setenv("AGENT_MAX_TURNS", "9")
         monkeypatch.setenv("AGENT_MAX_RETRANSLATE", "4")
-        loop = AgentLoop.from_env(RuleBasedGateway(), runner)
+        loop = AgentLoop.from_env(
+            RuleBasedGateway(),
+            runner,
+            self_check=TranslationSelfCheck(
+                max_retranslate=int(os.environ["AGENT_MAX_RETRANSLATE"])
+            ),
+        )
         assert loop.max_turns == 9
         assert loop.self_check.max_retranslate == 4
 

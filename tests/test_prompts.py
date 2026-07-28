@@ -3,8 +3,9 @@
 import ast
 from pathlib import Path
 
-from agent.prompts import (
-    SYSTEM_PROMPT,
+from agent.prompts import SYSTEM_PROMPT
+from capabilities.translation.prompts import (
+    TRANSLATION_RULES,
     format_glossary_block,
     glossary_prompt,
     retranslate_prompt,
@@ -24,8 +25,11 @@ class TestSystemPrompt:
         for name in discover():
             assert name not in SYSTEM_PROMPT, f"system prompt mentions the tool {name!r}"
 
-    def test_states_the_glossary_ordering_rule(self):
-        assert "先查詢術語" in SYSTEM_PROMPT
+    def test_contains_no_translation_policy(self):
+        assert "先查詢術語" not in SYSTEM_PROMPT
+
+    def test_translation_profile_owns_the_glossary_ordering_rule(self):
+        assert "先查詢術語" in TRANSLATION_RULES
 
     def test_is_not_empty(self):
         assert len(SYSTEM_PROMPT.strip()) > 50
@@ -39,15 +43,16 @@ class TestPromptsModuleIsPure:
         cost of getting it wrong is a circular dependency that only shows up when
         the MCP server starts.
         """
-        source = Path("agent/prompts.py").read_text(encoding="utf-8")
-        tree = ast.parse(source)
-        modules: set[str] = set()
-        for node in ast.walk(tree):
-            if isinstance(node, ast.ImportFrom) and node.module:
-                modules.add(node.module.split(".")[0])
-            elif isinstance(node, ast.Import):
-                modules.update(alias.name.split(".")[0] for alias in node.names)
-        assert modules <= {"contracts"}, f"prompts.py imports {modules - {'contracts'}}"
+        for filename in ("agent/prompts.py", "capabilities/translation/prompts.py"):
+            source = Path(filename).read_text(encoding="utf-8")
+            tree = ast.parse(source)
+            modules: set[str] = set()
+            for node in ast.walk(tree):
+                if isinstance(node, ast.ImportFrom) and node.module:
+                    modules.add(node.module.split(".")[0])
+                elif isinstance(node, ast.Import):
+                    modules.update(alias.name.split(".")[0] for alias in node.names)
+            assert modules <= {"contracts"}, f"{filename} imports {modules - {'contracts'}}"
 
 
 class TestFormatGlossaryBlock:

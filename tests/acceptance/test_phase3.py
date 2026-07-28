@@ -9,6 +9,7 @@ from agent.loop import AgentLoop
 from agent.mcp_client import LocalToolRunner
 from agent.metrics import RunRecord, format_report, summarize
 from agent.testing import RuleBasedGateway
+from capabilities.translation.policy import TranslationSelfCheck
 from evals.run_eval import glossary_cases, routing_cases, translation_cases
 from tests.mcp_session import mcp_session
 
@@ -24,7 +25,9 @@ requires_gateway = pytest.mark.skipif(
 async def run_cases(gateway, tools, cases):
     records = []
     for case in cases:
-        result = await AgentLoop(gateway, tools).run(case["text"])
+        result = await AgentLoop(
+            gateway, tools, self_check=TranslationSelfCheck()
+        ).run(case["text"])
         records.append(RunRecord(case["text"], result, expected_tool=case.get("expected_tool")))
     return summarize(records)
 

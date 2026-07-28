@@ -12,6 +12,7 @@ from agent.loop import AgentLoop
 from agent.mcp_client import LocalToolRunner
 from agent.metrics import RunRecord, summarize
 from agent.testing import RuleBasedGateway
+from capabilities.translation.policy import TranslationSelfCheck
 from contracts.agent import StopReason
 from glossary.matcher import match_terms
 from glossary.scanner import scan
@@ -62,7 +63,9 @@ class TestCriterion2LoopBudget:
     async def test_still_holds_against_the_live_server_with_every_tool(self):
         """The budget must not degrade once the registry grows."""
         async with mcp_session() as server:
-            result = await AgentLoop(RuleBasedGateway(), server).run(DEMO_SENTENCE)
+            result = await AgentLoop(
+                RuleBasedGateway(), server, self_check=TranslationSelfCheck()
+            ).run(DEMO_SENTENCE)
 
         assert result.metrics.turns <= 3
         assert result.metrics.tool_calls == 1
@@ -74,7 +77,9 @@ class TestCriterion3EndToEndTranslationHits:
 
     async def test_through_the_real_mcp_server(self, glossary):
         async with mcp_session() as server:
-            result = await AgentLoop(RuleBasedGateway(), server).run(DEMO_SENTENCE)
+            result = await AgentLoop(
+                RuleBasedGateway(), server, self_check=TranslationSelfCheck()
+            ).run(DEMO_SENTENCE)
 
         verdicts = match_terms(result.output, scan(DEMO_SENTENCE, glossary), glossary)
         assert [v.verdict.value for v in verdicts] == ["HIT"]

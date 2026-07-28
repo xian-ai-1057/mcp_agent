@@ -168,6 +168,16 @@ class RuleBasedGateway:
     def _answer_from_tool(self, messages: list[dict[str, Any]]) -> AssistantTurn:
         tool_message = messages[-1]
         name = tool_message.get("name") or ""
+        if not name:
+            call_id = tool_message.get("tool_call_id")
+            for message in reversed(messages[:-1]):
+                for call in message.get("tool_calls", []):
+                    if call.get("id") == call_id:
+                        function = call.get("function") or {}
+                        name = function.get("name") or ""
+                        break
+                if name:
+                    break
         payload = _load(tool_message.get("content"))
         source = next(
             (m.get("content", "") for m in messages if m.get("role") == "user"),
