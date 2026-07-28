@@ -71,9 +71,13 @@ def installed_glossary(csv_factory):
     """Install a temporary glossary as the process-wide one, then restore."""
     created: list[Path] = []
 
-    def _install(rows: list[tuple[str, str, str, str]]) -> tuple[Path, GlossaryLoader]:
+    def _install(
+        rows: list[tuple[str, str, str, str]],
+        *,
+        conflict_policy: str = "error",
+    ) -> tuple[Path, GlossaryLoader]:
         path = csv_factory(rows)
-        loader = GlossaryLoader(path)
+        loader = GlossaryLoader(path, conflict_policy=conflict_policy)
         set_loader(loader)
         created.append(path)
         return path, loader

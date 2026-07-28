@@ -5,7 +5,15 @@ import threading
 
 import pytest
 
-from glossary.loader import GlossaryError, GlossaryLoader, load_glossary
+from contracts.glossary import GlossaryEntry
+from glossary.loader import (
+    GlossaryConflictError,
+    GlossaryError,
+    GlossaryLoader,
+    build_glossary,
+    load_glossary,
+)
+from glossary.scanner import scan
 
 BASIC = [
     ("額度", "credit limit", "", "授信"),
@@ -77,7 +85,10 @@ class TestLoadErrors:
         path = csv_factory(
             [("額度", "credit limit", "共用", "授信"), ("帳戶", "account", "共用", "帳戶")]
         )
-        with pytest.raises(GlossaryError, match="claimed by both"):
+        with pytest.raises(
+            GlossaryError,
+            match=r":3: alias '共用'.*first claimed on line 2",
+        ):
             load_glossary(path)
 
     def test_alias_colliding_with_a_canonical_term_keeps_the_canonical(self, csv_factory):
@@ -92,6 +103,81 @@ class TestLoadErrors:
         path.write_text("zh,en,aliases,category\n", encoding="utf-8")
         with pytest.raises(GlossaryError, match="no usable rows"):
             load_glossary(path)
+
+    def test_unknown_conflict_policy(self, csv_factory):
+        with pytest.raises(ValueError, match="unknown glossary conflict policy"):
+            load_glossary(csv_factory(BASIC), conflict_policy="guess")
+
+    def test_low_level_builder_never_silently_resolves_duplicate_entries(self, tmp_path):
+        entries = (
+            GlossaryEntry(zh="警示帳戶", en="Watchlisted Account", category="風控"),
+            GlossaryEntry(zh="警示帳戶", en="Warning Account", category="警示帳戶"),
+        )
+
+        with pytest.raises(GlossaryError, match="duplicate term"):
+            build_glossary(entries, tmp_path / "g.csv", conflict_policy="quarantine")
+
+
+class TestQuarantine:
+    def test_conflicting_duplicate_does_not_block_unrelated_terms(self, csv_factory):
+        path = csv_factory(
+            [
+                ("信用卡", "Credit Card", "", "卡片"),
+                ("警示帳戶", "Watchlisted Account", "", "風控"),
+                ("警示帳戶", "Warning Account", "", "警示帳戶"),
+            ]
+        )
+
+        glossary = load_glossary(path, conflict_policy="quarantine")
+
+        assert [match.en for match in scan("客戶申請信用卡", glossary)] == ["Credit Card"]
+        assert "警示帳戶" not in glossary.by_zh
+        assert glossary.conflicts["警示帳戶"].lines == (3, 4)
+
+    def test_conflicting_term_fails_instead_of_choosing_first_or_last(self, csv_factory):
+        path = csv_factory(
+            [
+                ("帳戶", "Account", "", "帳戶"),
+                ("警示帳戶", "Watchlisted Account", "", "風控"),
+                ("警示帳戶", "Warning Account", "", "警示帳戶"),
+            ]
+        )
+        glossary = load_glossary(path, conflict_policy="quarantine")
+
+        with pytest.raises(GlossaryConflictError, match=r"lines 3, 4"):
+            scan("這是警示帳戶", glossary)
+
+    def test_identical_translations_are_collapsed_and_aliases_merged(self, csv_factory):
+        path = csv_factory(
+            [
+                ("交易監控", "Transaction Monitoring", "交易監測", "風控"),
+                ("交易監控", "transaction-monitoring", "監控交易", "ATM"),
+            ]
+        )
+
+        glossary = load_glossary(path, conflict_policy="quarantine")
+
+        assert len(glossary) == 1
+        assert glossary.by_zh["交易監控"].aliases == ["交易監測", "監控交易"]
+        assert glossary.conflicts == {}
+
+    def test_shared_alias_is_quarantined_but_canonical_terms_remain(self, csv_factory):
+        path = csv_factory(
+            [
+                ("額度", "credit limit", "共同別名", "授信"),
+                ("帳戶", "account", "共同別名", "帳戶"),
+                ("貸款", "loan", "共同別名", "貸款"),
+            ]
+        )
+        glossary = load_glossary(path, conflict_policy="quarantine")
+
+        assert [match.zh for match in scan("額度、帳戶與貸款", glossary)] == [
+            "額度",
+            "帳戶",
+            "貸款",
+        ]
+        with pytest.raises(GlossaryConflictError, match=r"lines 2, 3, 4"):
+            scan("共同別名", glossary)
 
 
 class TestReload:
@@ -175,3 +261,22 @@ class TestReload:
 
         assert not errors
         assert set(seen) == {3}
+
+    def test_quarantine_reload_adopts_usable_rows_and_isolates_conflict(self, csv_factory):
+        path = csv_factory([("警示帳戶", "alert account", "", "帳戶")])
+        loader = GlossaryLoader(path, conflict_policy="quarantine")
+        assert loader.get().by_zh["警示帳戶"].en == "alert account"
+
+        path.write_text(
+            "zh,en,aliases,category\n"
+            "警示帳戶,Watchlisted Account,,風控\n"
+            "警示帳戶,Warning Account,,警示帳戶\n"
+            "信用卡,Credit Card,,卡片\n",
+            encoding="utf-8",
+        )
+        touch_newer(path)
+
+        glossary = loader.get()
+        assert glossary.by_zh["信用卡"].en == "Credit Card"
+        assert "警示帳戶" not in glossary.by_zh
+        assert loader.reload_count == 2

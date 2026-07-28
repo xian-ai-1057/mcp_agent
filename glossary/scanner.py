@@ -4,7 +4,7 @@ See `specs/001-glossary-core/spec.md` §5.
 """
 
 from contracts.glossary import TermMatch
-from glossary.loader import Glossary
+from glossary.loader import Glossary, GlossaryConflictError
 from glossary.normalize import normalize_zh
 
 
@@ -23,7 +23,9 @@ def scan(text: str, glossary: Glossary) -> list[TermMatch]:
     instructions about the same span of text.
 
     Repeat occurrences are each returned with their own span; de-duplication is
-    the caller's decision, which is why offsets are part of the contract.
+    the caller's decision, which is why offsets are part of the contract. A
+    quarantined surface participates in the same longest-first pattern but
+    raises instead of falling through to an arbitrary or nested translation.
     """
     if not text:
         return []
@@ -32,8 +34,12 @@ def scan(text: str, glossary: Glossary) -> list[TermMatch]:
     matches: list[TermMatch] = []
 
     for found in glossary.scan_pattern.finditer(normalized):
-        entry = glossary.surface_to_entry.get(found.group(0))
-        if entry is None:  # pragma: no cover - pattern is built from the index
+        surface = found.group(0)
+        conflict = glossary.conflict_for(surface)
+        if conflict is not None:
+            raise GlossaryConflictError(conflict)
+        entry = glossary.surface_to_entry.get(surface)
+        if entry is None:  # pragma: no cover - pattern is built from both indexes
             continue
         matches.append(
             TermMatch(zh=entry.zh, en=entry.en, start=found.start(), end=found.end())

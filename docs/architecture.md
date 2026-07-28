@@ -1,69 +1,79 @@
 # 架構圖與流程圖
 
-本文件原本是 `specs/001~003` 翻譯 vertical slice 的視覺化補充。0.4 起，該流程是
-`translation` capability，不再是 Agent core 本身；下方既有圖仍用來說明這個 capability 與
-legacy `server.py`。目前 production entry path 是設定驅動的多 MCP 架構：
+本文件同時描述兩條路徑：0.4 之後的 production 多 MCP 架構，以及仍受 regression tests
+保護的 0.3.x legacy `server.py` 相容路徑。除非章節明確標示 legacy，下方的「現行流程」都指
+CLI 或 FastAPI adapter 建立 `AgentLoop`、透過 `MCPToolPool` 聚合隔離的 MCP server。
+
+快速總覽：Agent HTTP 服務、模型 API 與 RAG Manager 是三個不同端點；RAG upload server
+不是預設能力，必須由部署者透過 MCP JSON config 明確啟用。
 
 ```mermaid
-flowchart TD
-    UI["CLI / FastAPI / HTML test bench"] --> CORE["generic AgentLoop<br/>gateway + budgets + policy hooks"]
-    CORE --> POOL["MCPToolPool<br/>config + names + timeout + env isolation"]
-    POOL --> UTIL["utilities MCP<br/>hello / time / weather"]
-    POOL --> TRANS["translation MCP<br/>lookup / verify"]
-    POOL --> RAG["RAG upload MCP<br/>safe staging file → HTTP upload job"]
-    TP["optional translation policy"] -.-> CORE
-    TRANS -.-> TP
+flowchart LR
+    BROWSER["Browser<br/>HTML test bench"] -->|"GET / · POST /api/v1/runs"| WEB["FastAPI adapter<br/>AgentService"]
+    APP["Other application"] -->|"versioned JSON API"| WEB
+    CLI["CLI"] --> CORE["AgentLoop<br/>one isolated run"]
+    WEB --> CORE
+
+    CORE --> GW{"Gateway"}
+    GW --> FAKE["RuleBasedGateway<br/>offline test"]
+    GW --> HTTPGW["HTTPGateway"]
+    HTTPGW --> MODEL["OpenAI-compatible<br/>model API"]
+
+    CORE -->|"ToolRunner"| POOL["MCPToolPool<br/>shared by FastAPI lifespan"]
+    POOL -->|"stdio · default"| UTIL["utilities MCP"]
+    POOL -->|"stdio · default"| TRANS["translation MCP"]
+    POOL -.->|"stdio · explicit config"| RAG["RAG upload MCP"]
+    RAG --> RAGAPI["Existing RAG Manager API"]
+    POLICY["optional capability policy"] -.-> CORE
 ```
 
-核心依賴方向：`agent/loop.py` 只依賴 `agent/policy.py` 的通用 protocol；翻譯 prompt/policy
-位於 `capabilities/translation/`；三個 server 透過 `mcp_servers/common.py` 共用 MCP wire glue。
-RAG server 只是一個手寫 HTTP adapter，不包含任何外部 RAG repository 的內容。
+核心依賴方向：`agent/loop.py` 只依賴 `Gateway`、`ToolRunner`、`RunPolicy` 三個通用介面；
+翻譯 prompt/policy 位於 `capabilities/translation/`；各 server 透過 `mcp_servers/common.py`
+共用 MCP wire glue。RAG server 是手寫 HTTP adapter，不包含任何外部 RAG repository 的程式。
 
 | # | 圖 | 回答什麼問題 |
 |---|---|---|
-| 1 | [高階流程](#1-高階流程圖) | 這東西到底在做什麼？ |
-| 2 | [系統架構](#2-系統架構圖) | 有哪幾層？誰可以依賴誰？ |
-| 3 | [端到端序列](#3-端到端流程圖) | 一次翻譯請求實際跑過哪些元件？ |
+| 1 | [高階流程](#1-高階流程圖) | 一次 CLI／API 請求如何變成結果？ |
+| 2 | [系統架構](#2-系統架構圖) | 誰擁有生命週期、Gateway 與 MCP 邊界？ |
+| 3 | [服務與端到端序列](#3-服務生命週期與端到端流程圖) | FastAPI 如何啟動、執行請求與處理外部 HTTP？ |
 | 4 | [Agent Loop](#4-agent-loop-流程圖) | 回合怎麼算？工具失敗怎麼辦？ |
-| 5 | [自檢重譯](#5-自檢重譯決策流程) | 什麼時候重譯？為什麼不會無限迴圈？ |
+| 5 | [翻譯 policy](#5-自檢重譯決策流程) | 什麼時候驗證／重譯？為什麼不會無限迴圈？ |
 | 6 | [最長優先掃描](#6-術語掃描最長優先) | 為什麼「臨時額度」會壓過「額度」？ |
 | 7 | [命中判定](#7-命中判定hit--wrong--miss) | HIT / WRONG / MISS 怎麼分？ |
 | 8 | [對照表重載](#8-對照表-mtime-重載) | 改了 CSV 為什麼不用重啟？ |
-| 9 | [工具自動註冊](#9-工具自動註冊可插拔) | 為什麼加工具不用改 server？ |
+| 9 | [能力註冊與聚合](#9-能力註冊與多-mcp-聚合) | 新能力如何加入 production pool？legacy 自動註冊保留在哪？ |
 | 10 | [契約流向](#10-契約流向) | 哪個型別跨過哪條邊界？ |
 
 ---
 
 ## 1. 高階流程圖
 
-30 秒版本。使用者丟一句中文，拿回一句英文，中間模型自己決定要不要查術語。
+30 秒版本。CLI、網頁與其他應用共用同一個 capability-neutral loop；差別只在 adapter
+如何驗證輸入、管理生命週期與輸出 envelope。
 
 ```mermaid
 flowchart TD
-    U(["使用者<br/>請幫我翻譯：客戶申請提高臨時額度"]) --> A1
+    REQ(["① 一次獨立請求"]) --> ENTRY{"入口"}
+    ENTRY -->|"CLI"| CLI["載入 env／MCP config<br/>命令生命週期持有 tool pool"]
+    ENTRY -->|"HTML 或其他應用"| HTTP["FastAPI middleware + Pydantic<br/>Host／body／content-type 邊界"]
+    HTTP --> SERVICE["② AgentService<br/>等待單一 run slot + 總逾時"]
+    CLI --> BUILD["③ 選 profile 與 Gateway<br/>建立 AgentLoop"]
+    SERVICE --> BUILD
 
-    A1["① 模型看工具清單，決定呼叫哪個工具<br/>（也可能什麼都不叫 —— 這是被量測的風險）"]
-    A2["② 查術語<br/>臨時額度 → temporary credit limit"]
-    A3["③ 依術語產生譯文"]
-    A4{"④ 自檢<br/>術語真的用了嗎？"}
-
-    A1 -->|翻譯類請求| A2
-    A2 --> A3
-    A3 --> A4
-    A4 -->|有漏，且未達重譯上限| A3
-    A4 -->|都用到了 或 用完重譯次數| OUT
-
-    A1 -->|其他請求，例如問時間| OTHER["呼叫對應的工具<br/>get_time / get_weather / say_hello"]
-    OTHER --> OUT
-
-    OUT(["譯文 + 命中率<br/>The customer applied to raise<br/>the temporary credit limit."])
-
-    GL[("術語對照表 CSV<br/>唯讀資產")] -.-> A2
-    GL -.-> A4
+    BUILD --> MODEL["④ model complete<br/>fake 或 OpenAI-compatible HTTP"]
+    MODEL --> CALLS{"回傳 tool_calls？"}
+    CALLS -->|"是"| TOOL["⑤ MCPToolPool 路由 public name<br/>stdio tools/call"]
+    TOOL --> RESULT["工具結果或可恢復錯誤<br/>加入 messages"]
+    RESULT --> MODEL
+    CALLS -->|"否"| POLICIES["⑥ 依序執行 capability policies<br/>例如 bounded translation self-check"]
+    POLICIES --> OUT(["⑦ RunResult<br/>answer + metrics + tool trace + artifacts"])
+    OUT --> RENDER{"adapter"}
+    RENDER -->|"CLI"| TEXT["文字／JSON 輸出"]
+    RENDER -->|"FastAPI"| ENVELOPE["AgentRunResponse<br/>或安全錯誤 envelope"]
 ```
 
-**為什麼第 ① 步是風險所在**：離線實驗顯示，模型有查術語是 98.1% / 99.0%，沒查是
-42.7% / 49.7%。所以「模型有沒有呼叫工具」被列為量測指標，不是假設。
+模型可以不呼叫任何工具；這是正常、可量測的結果。翻譯 profile 只有在模型成功呼叫
+`lookup_terms` 後才可能執行術語 policy，generic profile 不會把翻譯規則塞進 core。
 
 ---
 
@@ -71,131 +81,211 @@ flowchart TD
 
 ### 2.1 分層依賴圖
 
-**實線箭頭代表「依賴」，方向只能由上往下。** 圖上只有一條往回的虛線，就是下面說明的那條例外。
+實線代表 runtime 呼叫或持有關係；虛線代表設定、資料或可選 policy。FastAPI 與 CLI 是
+兩個 adapter，但最後都只把 `Gateway` 與 `ToolRunner` 交給同一個 `AgentLoop`。
 
 ```mermaid
-flowchart TD
-    L1["<b>agent/ — Client 層</b><br/>cli · loop · gateway · bridge · mcp_client · prompts · metrics"]
-    L2["<b>server.py — MCP 介面層</b><br/>零業務邏輯、零工具名稱"]
-    L3["<b>tools/ — 工具層</b><br/>registry · base · 5 個工具模組"]
-    L4["<b>glossary/ — 知識層</b><br/>loader · scanner · matcher · normalize"]
-    CSV[("data/glossary.csv<br/>唯讀資產")]
-    CT["<b>contracts/ — 跨層契約</b><br/>Pydantic v2，Phase 0 定稿"]
+flowchart LR
+    subgraph CLIENTS["呼叫端"]
+        BROWSER["Browser<br/>HTML test bench"]
+        APPC["Other API client"]
+        CLIC["CLI"]
+    end
 
-    L1 -->|"spawn 子行程<br/>stdio JSON-RPC"| L2
-    L2 -->|"discover / SPEC.run"| L3
-    L3 -->|"scan / match_terms"| L4
-    L4 --> CSV
+    subgraph HOST["Agent host process"]
+        API["agent/web.py<br/>FastAPI + middleware + lifespan"]
+        SVC["AgentService<br/>single-run lock · queue/run timeout"]
+        CLI["agent/cli.py<br/>argument + output adapter"]
+        LOOP["agent/loop.py<br/>AgentLoop"]
+        POLICY["agent/policy.py<br/>RunPolicy protocol"]
+        GW["agent/gateway.py<br/>Gateway protocol + HTTPGateway"]
+        POOL["agent/mcp_client.py<br/>MCPToolPool"]
+    end
 
-    L3 -.->|"唯一例外：只 import 純文字的 prompts.py"| L1
+    BROWSER -->|"same-origin HTTP"| API
+    APPC -->|"/api/v1/*"| API
+    CLIC --> CLI
+    API --> SVC
+    SVC -->|"one loop per request"| LOOP
+    CLI -->|"one loop per command"| LOOP
+    LOOP -->|"Gateway"| GW
+    LOOP -->|"ToolRunner"| POOL
+    LOOP -->|"after_run hook"| POLICY
 
-    L1 -.-> CT
-    L3 -.-> CT
-    L4 -.-> CT
+    GW --> FAKE["RuleBasedGateway<br/>test double"]
+    GW -->|"POST GATEWAY_BASE_URL/chat/completions"| MODEL["Model API"]
+    API -.->|"lifespan owns one shared pool"| POOL
+    CLI -.->|"command owns pool"| POOL
+
+    POOL -->|"stdio"| UTIL["mcp_servers.utilities<br/>default"]
+    POOL -->|"stdio"| TRANS["mcp_servers.translation<br/>default"]
+    POOL -.->|"stdio · explicit config"| RAG["mcp_servers.rag_upload"]
+    POOL -.->|"stdio · config"| CUSTOM["other MCP servers"]
+
+    TRANS --> CSV[("glossary.csv")]
+    STAGING[("allowlisted staging roots")] --> RAG
+    RAG -->|"POST RAG_UPLOAD_BASE_URL/datacenter/v1/file"| RAGAPI["RAG Manager API"]
+
+    ENV["server env<br/>model URL/key/model/HTTP opt-in"] -.-> GW
+    MCPCFG["MCP JSON config<br/>command/env/inherit_env/prefix/required"] -.-> POOL
+    CT["contracts/<br/>Pydantic boundary types"] -.-> API
+    CT -.-> LOOP
+    CT -.-> TRANS
 ```
 
 ### 2.2 模組職責
 
 | 層 | 模組 | 負責 | 明確不負責 |
 |---|---|---|---|
-| **agent/** | `cli.py` | CLI 參數解析、輸出渲染 | 其他所有事 |
-| | `web.py` | FastAPI lifespan、HTTP 契約、HTML test bench | Agent／工具業務邏輯 |
-| | `loop.py` | 多輪編排、回合上限、自檢決策 | 工具內部行為 |
-| | `gateway.py` | OpenAI 相容呼叫、格式差異吸收 | 工具語意 |
-| | `bridge.py` | MCP schema ↔ OpenAI tools 格式 | 業務語意 |
-| | `mcp_client.py` | spawn server、stdio 會話 | 選哪個工具 |
-| | `prompts.py` | system prompt、模板、glossary 區塊 | 呼叫模型 |
-| | `metrics.py` | 報表彙總 | 判定譯文 |
-| **server.py** | — | 工具註冊、I/O 轉換、錯誤包裝 | 任何業務邏輯 |
-| **tools/** | `registry.py` | 掃描 `tools/` 自動註冊 | 工具做什麼 |
-| | `base.py` | `ToolSpec` 契約與驗證 | 協定細節 |
-| | 各工具模組 | 一件事，自帶 name/description/schema | MCP 協定、gateway |
+| **entry adapters** | `agent/cli.py` | 載入 env、選 profile/Gateway、管理 command-lifetime pool、渲染輸出 | HTTP 契約、工具實作 |
+| | `agent/web.py` | FastAPI lifespan、middleware、版本化 API、HTML test bench、排隊與總逾時 | Agent／工具業務邏輯 |
+| **agent core** | `agent/loop.py` | model → tool → model、多輪預算、通用 policy hooks、`RunResult` | capability-specific 判定 |
+| | `agent/gateway.py` | OpenAI-compatible HTTP、URL/timeout/明文 opt-in 驗證、response drift normalization | 工具語意、API caller 認證 |
+| | `agent/tooling.py` | `ToolRunner` protocol 與一致的 invocation error | MCP process 細節 |
+| | `agent/policy.py` | `RunPolicy`／`PolicyContext`／`PolicyOutcome` | 翻譯或 RAG 規則 |
+| | `agent/bridge.py` | MCP schema ↔ OpenAI tools/messages | domain 邏輯 |
+| | `agent/metrics.py` | 評測報表彙總 | 線上 verdict 實作 |
+| **MCP host** | `agent/mcp_config.py` | 驗證 server command、env allowlist、prefix、required | capability policy |
+| | `agent/mcp_client.py` | spawn、initialize/list/call timeout、聚合 public names、collision check、最小 child env | 模型路由決策 |
+| **capabilities/** | `translation/prompts.py` | 翻譯規則、glossary block 與 repair prompt 純文字 renderer | Gateway、HTTP、MCP session |
+| | `translation/policy.py` | 成功 lookup 後的 bounded verify/repair | generic loop 控制流 |
+| **MCP servers** | `mcp_servers/common.py` | 明確 registry → MCP list/call wire glue | 工具 domain 邏輯 |
+| | `mcp_servers/utilities.py` | 預設 utility capability registry | translation／RAG |
+| | `mcp_servers/translation.py` | 預設 translation capability registry | upload／模型呼叫 |
+| | `mcp_servers/rag_upload/` | 檔案邊界、immutable snapshot、RAG multipart adapter | indexing 完成保證 |
+| **legacy** | `server.py` | 0.3.x 五工具聚合相容與 regression tests | production 預設啟動路徑 |
+| **tools/** | `registry.py` | legacy root server 掃描 `tools/` | split-server production registry |
+| | `base.py` | `ToolSpec` 契約與 argument 驗證 | MCP transport |
+| | 各工具模組 | 單一 handler，自帶 name/description/schema | Gateway、Agent loop |
 | **glossary/** | `loader.py` | 讀 CSV、展開別譯、預編譯、mtime 重載 | 掃描、判定 |
 | | `scanner.py` | 從中文問句找術語（最長優先） | 格式化、翻譯 |
 | | `matcher.py` | 判定譯文是否命中（唯一實作） | 決定要不要重譯 |
 | | `normalize.py` | 正規化、英文詞形展開、樣式編譯 | 決定要找什麼 |
+| **contracts/** | `contracts/api.py`、`agent.py`、`tools.py` | HTTP、run、tool result 的跨層型別 | process lifecycle |
 
 ### 權責一句話
 
 > **glossary 不知道 MCP 存在；tools 不知道 gateway 存在；agent 不知道對照表怎麼比對。**
 
-任何一層若需要知道另一層的實作細節，就是切分錯了 —— 修切分，不要修症狀。
+再加兩條 deployment 邊界：Gateway credential 只留在 Agent host；MCP child 預設只收到 runtime
+allowlist 與該 server 明列的 `inherit_env`。`GATEWAY_API_KEY` 和
+`GATEWAY_ALLOW_INSECURE_HTTP` 都不會自動流入任何 MCP server。
 
-### 那條唯一例外（虛線）
+### 純文字 renderer 的刻意共享
 
-`tools/translate_lookup.py` 會 import `agent/prompts.py` 的 `format_glossary_block`。
-這條依賴之所以被允許，只因為 `prompts.py` 是**純文字模組**：它只 import `contracts`，
-沒有 gateway、沒有 HTTP、沒有 loop。
+`tools/translate_lookup.py` 與 translation profile adapter 共用
+`capabilities/translation/prompts.py`。這條依賴之所以被允許，只因為該模組是純文字 renderer：
+只 import `contracts`，沒有 gateway、HTTP、MCP session 或 glossary runtime。
 
 ```mermaid
 flowchart LR
-    TL["tools/translate_lookup.py"] -->|format_glossary_block| P["agent/prompts.py"]
-    P -->|只能 import 這個| C["contracts/"]
-    P -.->|禁止| X["gateway / loop / httpx / glossary"]
+    TL["tools/translate_lookup.py"] -->|"format_glossary_block"| P["capabilities/translation/prompts.py"]
+    ADAPTER["agent/cli.py + agent/web.py"] -->|"TRANSLATION_RULES"| P
+    P -->|"only import"| C["contracts/"]
+    P -.->|"forbidden"| X["gateway / loop / httpx / glossary runtime"]
 
-    AST["tests/test_prompts.py<br/>TestPromptsModuleIsPure<br/>用 AST 檢查 import 清單"] -.->|強制| P
+    AST["tests/test_prompts.py<br/>AST import purity check"] -.->|"enforces"| P
 
     style X stroke-dasharray: 5 5
 ```
 
-好處是 glossary 區塊只有**一份 renderer**：工具端與 prompt 端不可能長得不一樣，
-而且改格式不會變成改 tool schema。
+`agent/prompts.py` 仍是 generic system prompt 的純文字模組；兩個 prompt modules 都由 AST test
+限制 import。工具名稱仍只經 API 的 `tools` 欄位進模型，不寫死在 generic system prompt。
 
 ---
 
-## 3. 端到端流程圖
+## 3. 服務生命週期與端到端流程圖
 
-一次翻譯請求，從 CLI 到譯文的完整序列。
+FastAPI 在 lifespan 只建立一個共享 pool；每個 request 則建立自己的 Gateway、messages 與
+`AgentLoop`。CLI 不經 HTTP adapter，但同樣使用 pool → stdio MCP 的路徑。
 
 ```mermaid
 sequenceDiagram
     autonumber
-    actor U as 使用者
-    participant CLI as agent/cli.py
-    participant AL as agent/loop.py
-    participant GW as Gateway<br/>OpenAI 相容
-    participant MC as agent/mcp_client.py
-    participant SRV as server.py<br/>子行程
-    participant T as tools/
-    participant G as glossary/
+    actor C as Browser / API caller
+    participant API as FastAPI adapter
+    participant SVC as AgentService
+    participant POOL as shared MCPToolPool
+    participant MCP as selected MCP server
+    participant AL as isolated AgentLoop
+    participant TP as TranslationSelfCheck
+    participant GW as selected Gateway
+    participant MODEL as Model API
+    participant GLOSS as glossary runtime
+    participant RAGM as RAG Manager API
 
-    U->>CLI: 請幫我翻譯：客戶申請提高臨時額度
-    CLI->>MC: spawn server.py（stdio）
-    MC->>SRV: initialize
-    MC->>SRV: tools/list
-    SRV->>T: registry.discover
-    T-->>SRV: 5 個 ToolSpec
-    SRV-->>MC: 工具清單 + schema
-    MC-->>AL: 轉成 OpenAI tools 格式
+    Note over API,MCP: Application startup — lifespan owns the pool
+    API->>API: load default or explicit MCP config
+    API->>POOL: enter pool(config)
+    Note over POOL,MCP: Default: utilities + translation; RAG requires explicit config
+    POOL->>MCP: spawn stdio + initialize + tools/list
+    MCP-->>POOL: tool schemas
+    POOL-->>API: aggregated public catalog
 
-    Note over AL,GW: 回合 1
-    AL->>GW: messages + tools
-    GW-->>AL: tool_call lookup_terms
+    C->>API: POST /api/v1/runs
+    API->>API: middleware + Pydantic boundary checks
+    API->>SVC: AgentRunRequest
+    SVC->>SVC: queue timeout → acquire single-run lock
+    SVC->>GW: create fake or HTTP gateway from server config
+    SVC->>AL: run one loop with shared pool
+    Note over SVC,AL: The whole loop is bounded by the configured run timeout
 
-    AL->>MC: call lookup_terms
-    MC->>SRV: tools/call
-    SRV->>T: SPEC.run
-    T->>G: scan（最長優先）
-    G-->>T: TermMatch[臨時額度]
-    T-->>SRV: LookupResult + glossary_block
-    SRV-->>AL: JSON 結果
+    loop Model turns within max_model_turns
+        AL->>GW: complete(messages, aggregated tools)
+        opt HTTPGateway
+            GW->>MODEL: POST GATEWAY_BASE_URL/chat/completions
+            MODEL-->>GW: assistant content / tool_calls
+        end
+        GW-->>AL: normalized AssistantTurn
 
-    Note over AL,GW: 回合 2
-    AL->>GW: 加上工具結果
-    GW-->>AL: 英文譯文
+        alt Assistant returned tool_calls
+            loop Every call in this assistant turn
+                AL->>POOL: call(public_name, arguments)
+                POOL->>MCP: stdio tools/call(remote_name)
+                alt translation capability
+                    MCP->>GLOSS: lookup / verify
+                    GLOSS-->>MCP: structured result
+                else explicitly enabled RAG upload
+                    MCP->>RAGM: POST RAG_UPLOAD_BASE_URL/datacenter/v1/file
+                    RAGM-->>MCP: upstream response or transport failure
+                    MCP->>MCP: validate receipt or normalize a safe tool error
+                else utility / custom server
+                    MCP->>MCP: run registered ToolSpec
+                end
+                MCP-->>POOL: MCP result
+                POOL-->>AL: content or recoverable invocation error
+            end
+        else Terminal assistant turn
+            AL->>AL: map finish reason to stop_reason
+        end
+    end
 
-    Note over AL,G: 自檢（policy 發起，不計入模型工具呼叫數）
-    AL->>SRV: verify_translation
-    SRV->>G: match_terms
-    G-->>SRV: HIT，hit_rate 1.0
-    SRV-->>AL: VerifyResult
+    opt translation profile and eligible successful lookup
+        AL->>TP: after_run(PolicyContext)
+        TP->>POOL: policy call verify_translation
+        POOL-->>TP: VerifyResult or invocation error
+        opt bounded repair is needed
+            TP->>GW: complete(repair conversation, tools=None)
+            GW-->>TP: candidate translation
+            TP->>POOL: verify candidate
+            POOL-->>TP: candidate VerifyResult
+        end
+        Note over TP,GW: Repairs share the remaining model-turn budget
+        TP-->>AL: bounded PolicyOutcome
+    end
 
-    AL-->>CLI: RunResult
-    CLI-->>U: 譯文 + 指標 + 逐術語判定
+    AL-->>SVC: RunResult
+    SVC->>GW: close per-request gateway
+    SVC->>SVC: release lock
+    SVC-->>API: AgentRunResponse
+    API-->>C: JSON envelope
+
+    Note over API,POOL: Application shutdown — close all child sessions once
 ```
 
-**注意第 ① 個關鍵設計**：system prompt 從頭到尾沒有出現任何工具名稱。工具清單走的是
-API 的 `tools` 欄位（序列 7～8），也就是模型真正讀取的地方。
+圖中有三條互不相同的 HTTP：呼叫端進 `/api/v1/runs`、Agent host 往
+`GATEWAY_BASE_URL/chat/completions`、以及可選 RAG MCP 往
+`RAG_UPLOAD_BASE_URL/datacenter/v1/file`。MCP host 與 child server 之間目前是 stdio，並非 HTTP。
 
 ---
 
@@ -205,91 +295,109 @@ API 的 `tools` 欄位（序列 7～8），也就是模型真正讀取的地方�
 
 ```mermaid
 flowchart TD
-    START(["run(user_text)"]) --> INIT["messages = [system, user]<br/>turns = 0"]
-    INIT --> CHECK{"turns < max_turns？<br/>預設 6"}
+    START(["run(user_text)"]) --> INIT["messages = [system, user]<br/>model_turns = 0"]
+    INIT --> CHECK{"model_turns < max_model_turns？<br/>預設 6"}
 
-    CHECK -->|否| EXHAUST["stop_reason = MAX_TURNS<br/>保留最後一段文字"]
-    CHECK -->|是| CALL["turns += 1<br/>gateway.complete(messages, tools)"]
+    CHECK -->|否| EXHAUST["stop_reason = MAX_TURNS<br/>保留 last_content"]
+    CHECK -->|是| CALL["model_turns += 1<br/>gateway.complete(messages, tools)"]
+    CALL --> KEEP["若有 content<br/>更新 last_content"]
+    KEEP --> WANT{"AssistantTurn 有 tool_calls？"}
 
-    CALL --> KEEP["若有文字內容<br/>記為 last_content"]
-    KEEP --> WANT{"有 tool_calls？"}
-
-    WANT -->|沒有| DONE["stop_reason = COMPLETED"]
-    WANT -->|有| EACH["逐一執行 tool_calls"]
-
-    EACH --> PARSE{"參數解析成功？"}
-    PARSE -->|否| ERRMSG["不呼叫工具<br/>把錯誤訊息回給模型"]
-    PARSE -->|是| RUN["透過 MCP 呼叫工具"]
+    WANT -->|沒有| TERMINAL["以 refusal / finish_reason 決定<br/>COMPLETED · REFUSED<br/>LENGTH_LIMIT · CONTENT_FILTER"]
+    WANT -->|有| APPEND["先加入完整 assistant message"]
+    APPEND --> NEXT["取同一 assistant turn<br/>下一個 tool call"]
+    NEXT --> PARSE{"參數解析成功？"}
+    PARSE -->|否| ERRMSG["不呼叫 handler<br/>建立可恢復錯誤內容"]
+    PARSE -->|是| RUN["MCPToolPool.call<br/>路由到 child server"]
 
     RUN --> OK{"工具成功？"}
     OK -->|否| ERRMSG
-    OK -->|是| RESULT["把結果加入 messages"]
+    OK -->|是| RESULT["取得工具內容"]
+    ERRMSG --> BAD["記錄 ToolCallRecord<br/>ok = False"]
+    RESULT --> GOOD["記錄 ToolCallRecord<br/>ok = True"]
+    BAD --> TOOLMSG["加入對應 tool result message"]
+    GOOD --> TOOLMSG
+    TOOLMSG --> MORE{"同一 assistant turn<br/>還有 tool call？"}
+    MORE -->|有| NEXT
+    MORE -->|沒有，全部執行完| CHECK
 
-    ERRMSG --> RECORD["記錄 ToolCallRecord<br/>ok = False"]
-    RESULT --> RECORD2["記錄 ToolCallRecord<br/>ok = True"]
-    RECORD --> CHECK
-    RECORD2 --> CHECK
-
-    DONE --> POST{"自檢政策成立？"}
-    EXHAUST --> POST
-    POST -->|是| SELF["進入自檢重譯<br/>見圖 5"]
-    POST -->|否| OUT(["RunResult"])
-    SELF --> OUT
+    TERMINAL --> HOOKS["依序呼叫所有 RunPolicy.after_run"]
+    EXHAUST --> HOOKS
+    HOOKS --> ELIGIBLE{"該 capability policy<br/>自己的條件成立？"}
+    ELIGIBLE -->|否| OUT(["RunResult"])
+    ELIGIBLE -->|是| POLICY["執行 bounded policy<br/>結果、records、artifacts 合併"]
+    POLICY --> OUT
 ```
 
 ### 三個刻意的設計
 
 | 情況 | 行為 | 為什麼 |
 |---|---|---|
-| 模型完全不呼叫工具 | **正常完成**，`called_any_tool = False` | 計畫拒絕假設模型會呼叫工具；拒絕假設的東西就必須量測 |
+| 一般回答且沒有 tool calls | **正常完成**，`called_any_tool = False` | 不假設每個問題都需要工具；是否呼叫仍必須量測 |
+| 無 tool calls，但 finish reason 不是一般完成 | 記為 `REFUSED`／`LENGTH_LIMIT`／`CONTENT_FILTER` | 「沒有工具」不代表模型正常回答，terminal reason 必須保留 |
+| 同一回合要求多個工具 | **全部依序執行**後才再次呼叫模型 | assistant message 與每個 tool result 必須成套，不能漏掉後面的 call |
 | 工具丟出錯誤 | 錯誤訊息回給模型，讓它自己補救 | 一個壞掉的工具不該讓整個 run 死掉 |
 | 參數是壞掉的 JSON | **不呼叫工具**，直接回錯誤 | gateway 格式差異不該變成 handler 的例外 |
 
-回合上限是唯一的硬邊界：耗盡是一個**被記錄的正常結果**，最後一段文字仍會回傳。
+總 model-turn 預算是所有模型呼叫的硬邊界；每個 capability 還可以有更小的自身上限。
+耗盡是一個**被記錄的正常結果**，最後一段文字仍會回傳。所有 policy 都會收到 hook，但可以依
+`completed`、工具紀錄與輸出內容自行拒絕執行。
 
 ---
 
 ## 5. 自檢重譯決策流程
 
-`verify_translation` 只回報，`agent/loop.py` 決策。這條切分讓工具保持無狀態、可獨立測試。
+`verify_translation` 只回報；決策者是
+`capabilities/translation/policy.py::TranslationSelfCheck`。`AgentLoop` 只提供通用 hook、剩餘
+預算與 invocation function，讓工具保持無狀態、core 保持 capability-neutral。
 
 ```mermaid
 flowchart TD
-    START(["產生譯文後"]) --> TRIG{"模型這次<br/>呼叫過 lookup_terms？"}
+    START(["TranslationSelfCheck.after_run"]) --> COMPLETE{"core stop_reason<br/>是 COMPLETED？"}
+    COMPLETE -->|否| SKIP(["跳過 policy"])
+    COMPLETE -->|是| TEXT{"output 非空？"}
+    TEXT -->|否| SKIP
+    TEXT -->|是| PAIR{"能解析可用的 lookup / verify pair？"}
+    PAIR -->|否| SKIP
+    PAIR -->|exact pair| LOOKUP
+    PAIR -->|唯一且同 namespace 的 prefix pair| LOOKUP{"lookup 曾成功，且<br/>initiator = MODEL？"}
+    LOOKUP -->|否| SKIP
+    LOOKUP -->|是| V1["policy 呼叫 verify_translation<br/>initiator = POLICY"]
 
-    TRIG -->|沒有| SKIP(["不做自檢<br/>verify = None"])
-    TRIG -->|有| AVAIL{"verify_translation<br/>在工具清單裡？"}
-    AVAIL -->|不在| SKIP
-    AVAIL -->|在| V1["呼叫 verify_translation<br/>initiator = POLICY"]
-
-    V1 --> RATE{"hit_rate == 1.0？"}
+    V1 --> VALID{"呼叫成功且<br/>VerifyResult schema 有效？"}
+    VALID -->|否| VERIFYFAIL(["停止；保留目前 output<br/>記錄失敗 record"])
+    VALID -->|是| RATE{"hit_rate == 1.0？"}
     RATE -->|是| GOOD(["完成<br/>附上 VerifyResult"])
-    RATE -->|否| CAP{"retranslations<br/>< max_retranslate？<br/>預設 2"}
+    RATE -->|否| CAP{"同時還有兩種預算？<br/>retranslations < max_retranslate<br/>model_turns < max_model_turns"}
 
     CAP -->|否| STOP(["停止<br/>如實回報未達 100%"])
     CAP -->|是| ASK["retranslate_prompt<br/>逐條列出漏掉的術語 + 正確英文<br/>附上前一次譯文"]
 
-    ASK --> GEN["gateway.complete<br/>這一輪不給工具"]
+    ASK --> GEN["gateway.complete(conversation, tools=None)<br/>extra model_turns += 1"]
     GEN --> EMPTY{"回傳空字串？"}
     EMPTY -->|是| STOP
-    EMPTY -->|否| V2["retranslations += 1<br/>再次 verify"]
+    EMPTY -->|否| V2["retranslations += 1<br/>policy 再次 verify candidate"]
 
-    V2 --> BETTER{"新的 hit_rate<br/>>= 舊的？"}
+    V2 --> VALID2{"呼叫成功且 schema 有效？"}
+    VALID2 -->|否| VERIFYFAIL
+    VALID2 -->|是| BETTER{"candidate hit_rate<br/>>= 目前 hit_rate？"}
     BETTER -->|是| ADOPT["採用新譯文"]
     BETTER -->|否| DISCARD["丟棄，保留舊譯文"]
     ADOPT --> RATE
     DISCARD --> RATE
 ```
 
-### 為什麼觸發條件是「呼叫過 lookup_terms」而不是「問句裡有『翻譯』」
+### 為什麼觸發條件看成功紀錄，而不是問句裡有沒有「翻譯」
 
-看**模型實際做了什麼**，不看使用者措辭。不做關鍵字嗅探，agent 才保持通用 ——
-未來的工具要自檢就寫自己的 policy，不需要在這裡加一條 `if`。
+看**模型實際成功做了什麼**，不看使用者措辭。失敗的 lookup、policy 自己發起的 call、跨
+namespace 的工具拼接，以及非正常完成的 core run 都不構成驗證依據。不做關鍵字嗅探，agent
+才保持通用；未來的能力要自檢就寫自己的 policy，不需要在 core 加一條 `if`。
 
 ### 為什麼終止的保證來自上限而不是模型的進步
 
-一個一直回傳同樣爛譯文的模型，`hit_rate` 永遠不變。如果用「沒有進步就停」當條件，
-`>=` 會一直成立而永遠不停。**是預算，不是進步，保證了終止**（驗收條件 9）。
+一個一直回傳同樣譯文的模型，`hit_rate` 永遠不變。如果只用「沒有進步就停」當條件，
+`>=` 會一直成立而永遠不停。**總 model-turn 預算與 `max_retranslate`，不是進步，保證了終止**。
+較差 candidate 不會覆蓋目前譯文，但只要兩種預算都還有剩餘，policy 仍可做下一次 bounded repair。
 
 ---
 
@@ -300,10 +408,10 @@ flowchart TD
     IN["問句：客戶申請提高臨時額度"] --> PAT["scan_pattern<br/>所有術語的 alternation<br/>依長度由長到短排序"]
     PAT --> IT["re.finditer 由左至右單次掃描"]
 
-    IT --> POS["位置 12：<br/>先試最長的候選"]
+    IT --> POS["位置 6：<br/>先試最長的候選"]
     POS --> M1{"臨時額度 匹配？"}
-    M1 -->|是| ACCEPT["接受 [12, 16)"]
-    ACCEPT --> SKIP["finditer 從 16 繼續<br/>額度 [14,16) 永遠不會被檢查"]
+    M1 -->|是| ACCEPT["接受 [6, 10)"]
+    ACCEPT --> SKIP["finditer 從 10 繼續<br/>額度 [8,10) 永遠不會被檢查"]
     SKIP --> OUT["TermMatch: 臨時額度<br/>額度：不出現"]
 ```
 
@@ -365,6 +473,10 @@ flowchart TD
 
 ## 8. 對照表 mtime 重載
 
+公開的 `load_glossary()`／`GlossaryLoader` 預設維持 strict：任何重複 canonical `zh` 都報錯。
+process-wide production runtime 明確採 `conflict_policy="quarantine"`，讓資料問題只影響有歧義的
+surface，而不是讓無關的 `lookup_terms` 全部失效。
+
 ```mermaid
 flowchart TD
     CALL(["任何一次 get()"]) --> STAT["stat CSV<br/>取 (mtime_ns, size)"]
@@ -374,12 +486,23 @@ flowchart TD
     FAIL -->|否| SAME{"和已載入的<br/>stamp 相同？"}
 
     SAME -->|相同| CACHED(["回傳快取<br/>不做任何事"])
-    SAME -->|不同| LOAD["重新讀取並編譯"]
+    SAME -->|不同| LOAD["重新讀取、驗證 row、分組"]
 
-    LOAD --> OK{"解析成功？"}
-    OK -->|是| NEW(["換上新的 Glossary<br/>reload_count += 1"])
-    OK -->|否，且有快取| STALE(["保留舊的可用版本<br/>每個 stamp 只記一次 log"])
-    OK -->|否，且無快取| RAISE
+    LOAD --> STRUCT{"欄位與每列結構有效？"}
+    STRUCT -->|否，且有快取| STALE(["保留舊的可用版本<br/>每個 stamp 只記一次 log"])
+    STRUCT -->|否，且無快取| RAISE
+    STRUCT -->|是| DUP{"production quarantine 下<br/>有重複／衝突 surface？"}
+    DUP -->|沒有| COMPILE["建立 indexes + longest-first pattern"]
+    DUP -->|相同 zh、相同 normalized en| MERGE["合併一筆 + aliases 去重<br/>記 warning"]
+    DUP -->|相同 zh、不同 en| QUAR["不選 first / last<br/>從 authoritative indexes 排除<br/>保留 conflict surface"]
+    DUP -->|alias 多重擁有| QUAR
+    MERGE --> COMPILE
+    QUAR --> COMPILE
+    COMPILE --> NEW(["原子換上新的 Glossary<br/>reload_count += 1"])
+
+    REQUEST["之後的 scan(text)"] --> PICK{"longest-first 選到<br/>quarantined surface？"}
+    PICK -->|否| MATCHED(["照常回傳 TermMatch"])
+    PICK -->|是| CONFLICT(["GlossaryConflictError<br/>tool 回傳可預期錯誤"])
 ```
 
 | 決策 | 理由 |
@@ -387,80 +510,105 @@ flowchart TD
 | 每次存取都 stat，而不是啟動時載入一次 | 對照表更新時間不定。長時間運行的 server 會**靜默地**供應舊譯法 —— 靜默才是真正的危險 |
 | 不做推送 / webhook 失效機制 | 目前 71 詞、正式 379 詞，重載是次毫秒等級。任何失效協定的維運成本都高於它省下的東西 |
 | stamp 同時看 size，不只看 mtime | 某些檔案系統 mtime 只到秒；同一秒內的編輯會被藏起來 |
-| 解析失敗保留舊版本 | 壞掉的編輯降級成「過時」，不是「掛掉」 |
+| 結構解析失敗保留舊版本 | 缺欄、空必填值等壞編輯降級成「過時」，不是「掛掉」 |
+| production 隔離衝突詞 | 無關詞仍可查；真正碰到歧義時明確失敗，絕不依 row order 猜譯法 |
+| strict API 仍預設拒絕 duplicate | 資料驗證／CI 可以維持 fail-fast；只有 runtime 明確選擇 availability policy |
 | `RLock` 保護 | 並行讀取只會看到舊的或新的 `Glossary`，不會看到蓋到一半的 |
+
+CSV 的 `aliases` 欄仍是 `|` 分隔的**中文來源別名**，不是可接受的英文同義詞；額外欄位不會
+偷偷改變 matcher 語意。若同一中文詞確實需要依 category 使用不同英文，現行
+`lookup_terms(text)` 沒有足夠的 disambiguation 維度，資料必須先拆成可判別的 source surface，
+或另行擴充帶 context/category 的契約。
 
 ---
 
-## 9. 工具自動註冊（可插拔）
+## 9. 能力註冊與多 MCP 聚合
 
-**加一個工具 = 加一個檔案。** 不改 `server.py`、不改 system prompt、不註冊到任何清單。
+Production 與 legacy 有兩種刻意不同的擴充路徑。新 domain capability 採明確 registry 與設定；
+「加一個檔案就自動出現」只屬於 0.3.x root-server 相容路徑。
 
 ```mermaid
-flowchart TD
-    NEW["新增 tools/my_tool.py<br/>裡面放一個 SPEC"] --> BOOT(["server.py 啟動"])
-    BOOT --> DISC["registry.discover()"]
-    DISC --> ITER["pkgutil.iter_modules 掃描 tools/"]
-    ITER --> FILTER["排除 _ 開頭<br/>排除 base / registry"]
-    FILTER --> IMP["逐一 import"]
+flowchart LR
+    subgraph PROD["Production split-server path"]
+        CONFIG["default_mcp_server_configs()<br/>或 MCP JSON config"] --> CLIENTS["MCPToolPool<br/>建立 configured clients"]
+        IMPL["新增 capability module<br/>一或多個 ToolSpec"] --> REG["該 MCP server 的<br/>explicit registry"]
+        REG --> CHILD["capability MCP child<br/>mcp_servers/common.py wire glue"]
+        CLIENTS -->|"依 config spawn + initialize"| CHILD
+        CHILD -->|"tools/list schemas"| CLIENTS
+        CLIENTS --> NAMES{"套用 prefix 後<br/>public name collision？"}
+        NAMES -->|是| FAIL(["startup fail fast"])
+        NAMES -->|否| CATALOG["聚合 schema + route table"]
+        CATALOG --> AGENT["AgentLoop 的 tools 欄位"]
+    end
 
-    IMP --> HAS{"模組有 SPEC？"}
-    HAS -->|沒有| WARN["跳過並記 warning<br/>套件裡放共用 helper 不算錯"]
-    HAS -->|有| TYPE{"是 ToolSpec？"}
-    TYPE -->|不是| ERR(["TypeError"])
-    TYPE -->|是| DUP{"名稱重複？"}
-    DUP -->|是| ERR2(["ValueError<br/>絕不靜默覆蓋"])
-    DUP -->|否| ADD["加入註冊表"]
-
-    ADD --> LIST["tools/list 直接回報<br/>name + description + schema"]
-    WARN --> LIST
-    LIST --> MODEL["模型在 API 的 tools 欄位看到它"]
+    subgraph LEGACY["0.3.x legacy root-server path"]
+        FILE["新增 tools/my_tool.py<br/>匯出一個 SPEC"] --> DISC["tools/registry.py<br/>pkgutil discover"]
+        DISC --> ROOT["server.py<br/>五工具聚合相容 server"]
+        ROOT --> OLDLIST["legacy tools/list"]
+    end
 ```
 
-### 這條設計主張是被自動驗證的
+預設 production config 只列 `mcp_servers.utilities`（`say_hello`、`get_time`、`get_weather`）與
+`mcp_servers.translation`（`lookup_terms`、`verify_translation`）；
+`mcp_servers.rag_upload` 的 `upload_document` 因為有外部寫入副作用，必須由部署者在 JSON config
+明確加入。每個 child process 只得到最小 runtime env、server 固定 `env` 與逐項
+`inherit_env`，pool 再處理 timeout、optional server、prefix 與 collision。
 
-驗收條件 6（`tests/acceptance/test_phase1.py::TestCriterion6Pluggability`）會：
+### Legacy 自動註冊仍有 regression test
 
-1. 確認 `probe_tool` 一開始不存在
-2. **實際寫入**一個新的工具檔到 `tools/`
-3. 開一個新的 server 子行程（等同重啟）
-4. 確認工具出現在清單裡，而且真的可以呼叫
-5. 刪除檔案
-6. 比對 `server.py` 與 `agent/prompts.py` 的 **SHA-256 沒有改變**
+驗收條件 6（`tests/acceptance/test_phase1.py::TestCriterion6Pluggability`）仍會實際新增一個
+`tools/probe_tool.py`、啟動 legacy `server.py`、驗證可 list/call，再刪除檔案並確認
+`server.py` 與 generic `agent/prompts.py` 的 SHA-256 沒變。這保護舊相容承諾，但不代表新
+production capability 應塞回 root server。
 
-> 不能被測試的設計主張只是口號。這一條有測試。
+### Description 仍承擔 model routing 責任
 
-### 代價：description 承擔全部路由責任
-
-system prompt 是通用的、不列舉工具，所以 `description` 就是路由政策本身。
-它必須寫「**什麼時候該呼叫它**」，而且要和兄弟工具區分開來：
-
-- `get_time` 寫明「這是報時，不是把『時間』兩個字翻成英文」—— 因為 `服務時間` 是術語，兩個意圖會撞。
-- `lookup_terms` 寫明「翻譯前先呼叫」—— 因為多呼叫一次的成本，遠低於漏呼叫一次。
-
-工具變多之後路由正確率掉下來，修的是 description，一個檔案的區域性改動。
+無論是哪一條註冊路徑，generic system prompt 都不列舉工具；模型看到的是 API `tools` 欄位。
+因此每個 `ToolSpec.description` 必須說清楚**何時呼叫、何時不要呼叫與副作用**。工具 catalog
+變大後若 routing 準確率下降，先量測 description／capability selection，而不是把 domain 名稱
+硬寫進 `AgentLoop`。
 
 ---
 
 ## 10. 契約流向
 
-`contracts/` 在 Phase 0 定稿，是唯一一個「改動會同時影響多層」的地方。
+`contracts/` 是跨層資料契約的集中處；process lifecycle、stdio transport 與外部 HTTP 則由各
+adapter 擁有。圖中的 RAG branch 是獨立 capability，不依賴 glossary contract。
 
 ```mermaid
 flowchart LR
-    CSV[("glossary.csv")] -->|GlossaryEntry| LOADER["glossary/loader"]
-    LOADER -->|Glossary| SCAN["glossary/scanner"]
-    SCAN -->|"TermMatch[]"| TOOL1["lookup_terms"]
-    TOOL1 -->|LookupResult| SRV["server.py"]
+    subgraph TRANS["Translation capability contracts"]
+        CSV[("glossary.csv")] -->|GlossaryEntry| LOADER["glossary/loader.py"]
+        LOADER -->|Glossary| SCAN["glossary/scanner.py"]
+        SCAN -->|"TermMatch[]"| LOOKUP["lookup_terms ToolSpec"]
+        SCAN -->|"TermMatch[]"| MATCHER["glossary/matcher.py"]
+        MATCHER -->|"TermVerdict[]"| VERIFY["verify_translation ToolSpec"]
+        LOOKUP -->|LookupResult| TSERVER["mcp_servers/translation.py"]
+        VERIFY -->|VerifyResult| TSERVER
+    end
 
-    SCAN -->|"TermMatch[]"| MATCH["glossary/matcher"]
-    MATCH -->|"TermVerdict[]"| TOOL2["verify_translation"]
-    TOOL2 -->|VerifyResult| SRV
+    POOL["MCPToolPool"] -->|"stdio tools/call"| TSERVER
+    TSERVER -->|"stdio schemas + results"| POOL
+    UTIL["utilities MCP"] -->|"stdio schemas + results"| POOL
+    POOL -->|"stdio tools/call"| UTIL
+    POOL -->|"schema + tool content"| BRIDGE["agent/bridge.py"]
+    BRIDGE --> LOOP["AgentLoop"]
+    LOOP -->|"public tool name + arguments"| POOL
 
-    SRV -->|JSON| LOOP["agent/loop"]
-    LOOP -->|RunResult| CLI["agent/cli"]
+    LOOP -->|RunResult| CLI["agent/cli.py"]
     LOOP -->|RunResult| EVAL["evals/"]
     EVAL -->|Report| REPORT[("evals/reports/*.json")]
+    LOOP -->|RunResult| SVC["AgentService"]
+    REQ["AgentRunRequest"] --> SVC
+    SVC -->|AgentRunResponse| API["FastAPI /api/v1/runs"]
+    API --> CALLER["Browser / other application"]
+
+    subgraph RAGBRANCH["Optional, independent RAG capability"]
+        RAG["mcp_servers/rag_upload"] -->|"multipart POST"| RAGAPI["RAG Manager API"]
+        RAGAPI -->|"upstream receipt"| RAG
+    end
+    POOL -->|"stdio tools/call<br/>upload_document arguments"| RAG
+    RAG -->|"safe stdio MCP result"| POOL
 ```
 
 | 型別 | 跨過的邊界 | 為什麼長這樣 |
@@ -469,7 +617,9 @@ flowchart LR
 | `LookupResult` | tools → agent | `matches` 給程式、`glossary_block` 給模型 —— 兩種消費者不同，所以兩種形狀並存 |
 | `VerifyResult` | tools → agent | 只回報，不決策 |
 | `ToolCallRecord.initiator` | agent 內部 | 分開 `MODEL` 與 `POLICY`：自檢的 verify 呼叫是真的，但它**不是模型選了工具的證據**，所以不計入工具呼叫率 |
-| `RunResult` | agent → CLI / evals | 同一個型別餵給人看的輸出和餵給報表 |
+| `RunResult` | agent → CLI / evals / AgentService | 同一個 core 結果可由不同 adapter 渲染或包裝 |
+| `AgentRunRequest` / `AgentRunResponse` | FastAPI caller ↔ AgentService | 版本化 HTTP envelope 不滲入 core loop；API key 與 insecure-HTTP opt-in 不在 request contract |
+| RAG upload arguments / safe result | AgentLoop／pool ↔ RAG MCP ↔ RAG Manager | 表達接受 upload job，不承諾 parse/index 已完成，也不與 translation contract 混用 |
 
 ---
 
@@ -478,4 +628,4 @@ flowchart LR
 - `specs/001-glossary-core/spec.md` —— 載入、mtime 重載、最長優先掃描、命中判定
 - `specs/002-mcp-tools/spec.md` —— 工具契約、自動註冊、五個工具的 schema
 - `specs/003-agent-client/spec.md` —— gateway、格式轉換、agent loop、prompts、CLI
-- `README.md` §4 —— 12 條驗收條件對照表
+- `README.md` —— 啟動方式、FastAPI 契約、MCP 設定與部署安全邊界

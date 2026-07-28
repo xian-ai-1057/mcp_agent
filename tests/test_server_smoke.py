@@ -75,3 +75,33 @@ class TestErrorMapping:
             # One broken tool must never take the session down.
             payload = json.loads(await server.call("get_time", {}))
             assert payload["timezone"] == "Asia/Taipei"
+
+
+class TestGlossaryConflictQuarantine:
+    async def test_unrelated_lookup_survives_duplicate_rows(self, tmp_path):
+        csv = tmp_path / "glossary.csv"
+        csv.write_text(
+            "zh,en,aliases,category\n"
+            "信用卡,Credit Card,,卡片\n"
+            "警示帳戶,Watchlisted Account,,風控\n"
+            "警示帳戶,Warning Account,,警示帳戶\n",
+            encoding="utf-8",
+        )
+
+        async with mcp_session(env={"GLOSSARY_CSV": str(csv)}) as server:
+            payload = json.loads(
+                await server.call("lookup_terms", {"text": "客戶申請信用卡"})
+            )
+            assert payload["matches"][0]["en"] == "Credit Card"
+
+            with pytest.raises(
+                ToolInvocationError,
+                match=r"conflicting translations on lines 3, 4",
+            ):
+                await server.call("lookup_terms", {"text": "這是警示帳戶"})
+
+            # A term-scoped data conflict must not kill the MCP session.
+            payload = json.loads(
+                await server.call("lookup_terms", {"text": "再次查詢信用卡"})
+            )
+            assert payload["count"] == 1

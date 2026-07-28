@@ -79,6 +79,22 @@ class TestLongestMatchFirst:
         matches = scan("客戶申請提高臨時額度", overlapping)
         assert [m.en for m in matches] == ["temporary credit limit"]
 
+    def test_valid_longer_term_suppresses_nested_quarantined_term(self, csv_factory):
+        glossary = load_glossary(
+            csv_factory(
+                [
+                    ("警示帳戶", "Watchlisted Account", "", "風控"),
+                    ("警示帳戶", "Warning Account", "", "警示帳戶"),
+                    ("警示帳戶通報機制", "alert account reporting mechanism", "", "帳戶"),
+                ]
+            ),
+            conflict_policy="quarantine",
+        )
+
+        assert [match.zh for match in scan("警示帳戶通報機制", glossary)] == [
+            "警示帳戶通報機制"
+        ]
+
 
 class TestScanBasics:
     def test_empty_text(self, glossary):

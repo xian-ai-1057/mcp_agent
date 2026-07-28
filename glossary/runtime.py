@@ -31,7 +31,9 @@ def get_loader() -> GlossaryLoader:
     global _loader
     with _lock:
         if _loader is None:
-            _loader = GlossaryLoader(default_csv_path())
+            # Production availability is term-scoped: unrelated rows remain
+            # usable while conflicting duplicate surfaces are quarantined.
+            _loader = GlossaryLoader(default_csv_path(), conflict_policy="quarantine")
         return _loader
 
 
