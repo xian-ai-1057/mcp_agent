@@ -1,6 +1,7 @@
 """FastAPI adapter tests: contracts, safety boundaries, and agent wiring."""
 
 import asyncio
+from pathlib import Path
 
 import httpx
 import pytest
@@ -50,6 +51,36 @@ class TestHTMLAndOperations:
         assert "unsafe-inline" not in response.headers["content-security-policy"]
         assert "object-src 'none'" in response.headers["content-security-policy"]
         assert response.headers["cache-control"] == "no-store"
+
+    def test_flow_page_is_served_with_its_own_csp(self, client):
+        home = client.get("/")
+        response = client.get("/flow")
+
+        assert response.status_code == 200
+        assert response.headers["content-type"].startswith("text/html")
+        assert "MCP Agent 流程動畫" in response.text
+        assert "/api/v1/runs" in response.text
+        assert response.headers["cache-control"] == "no-store"
+
+        policy = response.headers["content-security-policy"]
+        assert "default-src 'self'" in policy
+        assert "sha256-" in policy
+        assert "unsafe-inline" not in policy
+        assert "object-src 'none'" in policy
+        # Each page hashes its own inline blocks. `_inline_content_hash` only
+        # matches the first <style>/<script> in a document, so sharing one
+        # policy across pages would silently break whichever page it was not
+        # computed from.
+        assert policy != home.headers["content-security-policy"]
+
+    def test_each_page_has_exactly_one_inline_style_and_script(self):
+        for name in ("index.html", "flow.html"):
+            html = (Path(web_module.__file__).parent / "static" / name).read_text(encoding="utf-8")
+            assert html.count("<style>") == 1, name
+            assert html.count("<script>") == 1, name
+            # An attribute on the tag would make the CSP regex miss the block.
+            assert "<style " not in html, name
+            assert "<script " not in html, name
 
     def test_swagger_and_openapi_are_available(self, client):
         docs = client.get("/docs")

@@ -39,6 +39,7 @@ def test_wheel_contains_assets_and_runs_from_an_install(tmp_path):
     assert "capabilities/translation/policy.py" in names
     assert "agent/web.py" in names
     assert "agent/static/index.html" in names
+    assert "agent/static/flow.html" in names
     assert "contracts/api.py" in names
 
     install_dir = tmp_path / "installed"
