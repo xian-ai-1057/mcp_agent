@@ -1,0 +1,1478 @@
+<!doctype html>
+<html lang="zh-Hant">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light" />
+    <title>MCP Agent Lab</title>
+    <style>
+      :root {
+        --canvas: #f1efe8;
+        --paper: #fffdf8;
+        --paper-strong: #ffffff;
+        --ink: #172126;
+        --ink-soft: #425057;
+        --muted: #5c6a70;
+        --line: #dcded8;
+        --line-strong: #c6cbc7;
+        --accent: #d84c4c;
+        --accent-dark: #aa3036;
+        --accent-soft: #fde9e6;
+        --teal: #1d746c;
+        --teal-soft: #e0f1ed;
+        --amber: #a66813;
+        --amber-soft: #fff0cc;
+        --danger: #a52f36;
+        --danger-soft: #fde7e8;
+        --shadow: 0 22px 60px rgba(31, 42, 42, 0.1);
+        --shadow-soft: 0 8px 26px rgba(31, 42, 42, 0.07);
+        --radius-xl: 28px;
+        --radius-lg: 20px;
+        --radius-md: 14px;
+        --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+        --sans: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI",
+          "Noto Sans TC", "PingFang TC", "Microsoft JhengHei", sans-serif;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html {
+        min-width: 320px;
+        background: var(--canvas);
+      }
+
+      body {
+        min-height: 100vh;
+        margin: 0;
+        color: var(--ink);
+        font-family: var(--sans);
+        background:
+          radial-gradient(circle at 7% 4%, rgba(216, 76, 76, 0.09), transparent 25rem),
+          radial-gradient(circle at 96% 92%, rgba(29, 116, 108, 0.1), transparent 28rem),
+          var(--canvas);
+      }
+
+      button,
+      textarea,
+      input {
+        font: inherit;
+      }
+
+      button {
+        color: inherit;
+      }
+
+      button:focus-visible,
+      textarea:focus-visible,
+      input:focus-visible,
+      summary:focus-visible {
+        outline: 3px solid rgba(29, 116, 108, 0.25);
+        outline-offset: 2px;
+      }
+
+      .topbar {
+        width: min(1440px, calc(100% - 40px));
+        margin: 0 auto;
+        padding: 28px 0 20px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 20px;
+      }
+
+      .brand {
+        display: flex;
+        align-items: center;
+        gap: 13px;
+      }
+
+      .brand-mark {
+        width: 43px;
+        height: 43px;
+        display: grid;
+        place-items: center;
+        border-radius: 14px;
+        color: white;
+        background: var(--ink);
+        box-shadow: var(--shadow-soft);
+        font-size: 15px;
+        font-weight: 800;
+        letter-spacing: -0.04em;
+      }
+
+      .brand-copy strong {
+        display: block;
+        font-size: 16px;
+        line-height: 1.2;
+        letter-spacing: -0.01em;
+      }
+
+      .brand-copy span {
+        display: block;
+        margin-top: 4px;
+        color: var(--muted);
+        font-size: 12px;
+      }
+
+      .server-status {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        min-height: 34px;
+        padding: 0 13px;
+        border: 1px solid var(--line);
+        border-radius: 999px;
+        color: var(--ink-soft);
+        background: rgba(255, 253, 248, 0.72);
+        font-size: 12px;
+        font-weight: 650;
+        backdrop-filter: blur(12px);
+      }
+
+      .topbar-actions {
+        display: flex;
+        align-items: center;
+        gap: 9px;
+      }
+
+      .docs-link {
+        min-height: 34px;
+        display: inline-flex;
+        align-items: center;
+        padding: 0 13px;
+        border: 1px solid var(--line);
+        border-radius: 999px;
+        color: var(--ink-soft);
+        background: rgba(255, 253, 248, 0.72);
+        font-size: 11px;
+        font-weight: 700;
+        text-decoration: none;
+        backdrop-filter: blur(12px);
+      }
+
+      .docs-link:hover {
+        border-color: var(--teal);
+        color: var(--teal);
+      }
+
+      .status-dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: var(--amber);
+        box-shadow: 0 0 0 4px rgba(166, 104, 19, 0.12);
+      }
+
+      .server-status.online .status-dot {
+        background: var(--teal);
+        box-shadow: 0 0 0 4px rgba(29, 116, 108, 0.12);
+      }
+
+      .server-status.offline .status-dot {
+        background: var(--danger);
+        box-shadow: 0 0 0 4px rgba(165, 47, 54, 0.12);
+      }
+
+      .shell {
+        width: min(1440px, calc(100% - 40px));
+        margin: 0 auto;
+        padding-bottom: 38px;
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) 370px;
+        gap: 18px;
+        align-items: start;
+      }
+
+      .workbench,
+      .inspector {
+        border: 1px solid rgba(198, 203, 199, 0.8);
+        background: rgba(255, 253, 248, 0.92);
+        box-shadow: var(--shadow);
+        backdrop-filter: blur(18px);
+      }
+
+      .workbench {
+        min-height: calc(100vh - 125px);
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+        border-radius: var(--radius-xl);
+      }
+
+      .hero {
+        padding: 38px 40px 26px;
+        border-bottom: 1px solid var(--line);
+      }
+
+      .eyebrow {
+        display: inline-flex;
+        align-items: center;
+        gap: 7px;
+        margin-bottom: 14px;
+        color: var(--accent-dark);
+        font-family: var(--mono);
+        font-size: 11px;
+        font-weight: 750;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+      }
+
+      .eyebrow::before {
+        content: "";
+        width: 18px;
+        height: 2px;
+        border-radius: 99px;
+        background: var(--accent);
+      }
+
+      h1 {
+        max-width: 760px;
+        margin: 0;
+        font-size: clamp(30px, 4.2vw, 52px);
+        line-height: 1.05;
+        letter-spacing: -0.045em;
+        text-wrap: balance;
+      }
+
+      .hero p {
+        max-width: 700px;
+        margin: 16px 0 0;
+        color: var(--ink-soft);
+        font-size: 15px;
+        line-height: 1.7;
+      }
+
+      .examples {
+        margin-top: 22px;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+      }
+
+      .example-chip {
+        min-height: 34px;
+        padding: 0 12px;
+        border: 1px solid var(--line);
+        border-radius: 999px;
+        background: var(--paper-strong);
+        color: var(--ink-soft);
+        cursor: pointer;
+        font-size: 12px;
+        transition: border-color 150ms ease, color 150ms ease, transform 150ms ease;
+      }
+
+      .example-chip:hover {
+        border-color: var(--accent);
+        color: var(--accent-dark);
+        transform: translateY(-1px);
+      }
+
+      .example-chip:disabled,
+      .clear-button:disabled {
+        cursor: wait;
+        opacity: 0.5;
+        transform: none;
+      }
+
+      .conversation {
+        min-height: 300px;
+        max-height: 48vh;
+        padding: 30px 40px;
+        overflow: auto;
+        scroll-behavior: smooth;
+      }
+
+      .empty-state {
+        min-height: 240px;
+        display: grid;
+        place-items: center;
+        color: var(--muted);
+        text-align: center;
+      }
+
+      .empty-state-inner {
+        max-width: 380px;
+      }
+
+      .empty-symbol {
+        width: 54px;
+        height: 54px;
+        margin: 0 auto 14px;
+        display: grid;
+        place-items: center;
+        border: 1px solid var(--line);
+        border-radius: 18px;
+        color: var(--teal);
+        background: var(--teal-soft);
+        font-family: var(--mono);
+        font-size: 17px;
+        font-weight: 800;
+      }
+
+      .empty-state strong {
+        display: block;
+        margin-bottom: 7px;
+        color: var(--ink-soft);
+        font-size: 14px;
+      }
+
+      .empty-state span {
+        font-size: 13px;
+        line-height: 1.6;
+      }
+
+      .message {
+        display: flex;
+        gap: 12px;
+        margin-bottom: 22px;
+        animation: message-in 220ms ease both;
+      }
+
+      .message.user {
+        justify-content: flex-end;
+      }
+
+      .avatar {
+        flex: 0 0 auto;
+        width: 34px;
+        height: 34px;
+        display: grid;
+        place-items: center;
+        border-radius: 11px;
+        color: white;
+        background: var(--ink);
+        font-family: var(--mono);
+        font-size: 10px;
+        font-weight: 800;
+      }
+
+      .message.user .avatar {
+        order: 2;
+        background: var(--accent);
+      }
+
+      .bubble-wrap {
+        max-width: min(76%, 720px);
+      }
+
+      .message-label {
+        margin: 0 0 6px 2px;
+        color: var(--muted);
+        font-size: 11px;
+        font-weight: 700;
+      }
+
+      .message.user .message-label {
+        text-align: right;
+      }
+
+      .bubble {
+        padding: 14px 16px;
+        border: 1px solid var(--line);
+        border-radius: 5px 17px 17px 17px;
+        background: var(--paper-strong);
+        color: var(--ink);
+        font-size: 14px;
+        line-height: 1.65;
+        white-space: pre-wrap;
+        overflow-wrap: anywhere;
+      }
+
+      .message.user .bubble {
+        border-color: var(--ink);
+        border-radius: 17px 5px 17px 17px;
+        color: white;
+        background: var(--ink);
+      }
+
+      .message.error .bubble {
+        border-color: #efb9bc;
+        color: var(--danger);
+        background: var(--danger-soft);
+      }
+
+      .typing {
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+        min-height: 20px;
+      }
+
+      .typing i {
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        background: var(--muted);
+        animation: pulse 900ms infinite ease-in-out;
+      }
+
+      .typing i:nth-child(2) {
+        animation-delay: 120ms;
+      }
+
+      .typing i:nth-child(3) {
+        animation-delay: 240ms;
+      }
+
+      .composer {
+        margin-top: auto;
+        padding: 20px 24px 24px;
+        border-top: 1px solid var(--line);
+        background: rgba(247, 246, 241, 0.78);
+      }
+
+      .composer-box {
+        padding: 12px;
+        border: 1px solid var(--line-strong);
+        border-radius: 18px;
+        background: var(--paper-strong);
+        box-shadow: 0 6px 20px rgba(31, 42, 42, 0.05);
+        transition: border-color 150ms ease, box-shadow 150ms ease;
+      }
+
+      .composer-box:focus-within {
+        border-color: var(--teal);
+        box-shadow: 0 0 0 4px rgba(29, 116, 108, 0.09);
+      }
+
+      textarea {
+        width: 100%;
+        min-height: 78px;
+        max-height: 210px;
+        padding: 4px 6px;
+        resize: vertical;
+        border: 0;
+        outline: 0;
+        color: var(--ink);
+        background: transparent;
+        font-size: 14px;
+        line-height: 1.55;
+      }
+
+      textarea::placeholder {
+        color: #99a2a5;
+      }
+
+      .composer-actions {
+        margin-top: 8px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 14px;
+      }
+
+      .input-meta {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding-left: 5px;
+        color: var(--muted);
+        font-size: 11px;
+      }
+
+      .input-meta kbd {
+        padding: 2px 5px;
+        border: 1px solid var(--line);
+        border-bottom-color: var(--line-strong);
+        border-radius: 5px;
+        background: var(--canvas);
+        font-family: var(--sans);
+        font-size: 10px;
+      }
+
+      .send-button {
+        min-width: 108px;
+        min-height: 42px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 8px;
+        padding: 0 17px;
+        border: 0;
+        border-radius: 13px;
+        color: white;
+        background: var(--accent);
+        box-shadow: 0 8px 18px rgba(216, 76, 76, 0.22);
+        cursor: pointer;
+        font-size: 13px;
+        font-weight: 750;
+        transition: background 150ms ease, transform 150ms ease, opacity 150ms ease;
+      }
+
+      .send-button:hover:not(:disabled) {
+        background: var(--accent-dark);
+        transform: translateY(-1px);
+      }
+
+      .send-button:disabled {
+        cursor: wait;
+        opacity: 0.58;
+      }
+
+      .inspector {
+        position: sticky;
+        top: 18px;
+        max-height: calc(100vh - 36px);
+        overflow: auto;
+        border-radius: var(--radius-xl);
+      }
+
+      .inspector-header {
+        padding: 24px 24px 18px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        border-bottom: 1px solid var(--line);
+      }
+
+      .inspector-header h2 {
+        margin: 0;
+        font-size: 15px;
+        letter-spacing: -0.01em;
+      }
+
+      .clear-button {
+        min-height: 31px;
+        padding: 0 10px;
+        border: 1px solid var(--line);
+        border-radius: 9px;
+        color: var(--muted);
+        background: var(--paper-strong);
+        cursor: pointer;
+        font-size: 11px;
+        font-weight: 650;
+      }
+
+      .clear-button:hover {
+        border-color: var(--line-strong);
+        color: var(--ink);
+      }
+
+      .panel-section {
+        padding: 20px 24px;
+        border-bottom: 1px solid var(--line);
+      }
+
+      .panel-section:last-child {
+        border-bottom: 0;
+      }
+
+      .section-label {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+        margin: 0 0 10px;
+        color: var(--muted);
+        font-size: 10px;
+        font-weight: 800;
+        letter-spacing: 0.11em;
+        text-transform: uppercase;
+      }
+
+      .section-label.spaced {
+        margin-top: 17px;
+      }
+
+      .segmented {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 5px;
+        padding: 4px;
+        border: 1px solid var(--line);
+        border-radius: 13px;
+        background: #eeeee9;
+      }
+
+      .segmented label {
+        position: relative;
+        cursor: pointer;
+      }
+
+      .segmented input {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        opacity: 0;
+      }
+
+      .segmented span {
+        min-height: 35px;
+        display: grid;
+        place-items: center;
+        border-radius: 9px;
+        color: var(--muted);
+        font-size: 12px;
+        font-weight: 700;
+        transition: color 150ms ease, background 150ms ease, box-shadow 150ms ease;
+      }
+
+      .segmented input:checked + span {
+        color: var(--ink);
+        background: var(--paper-strong);
+        box-shadow: 0 3px 10px rgba(31, 42, 42, 0.08);
+      }
+
+      .segmented input:focus-visible + span {
+        outline: 3px solid rgba(29, 116, 108, 0.25);
+        outline-offset: 2px;
+      }
+
+      .segmented input:disabled + span {
+        cursor: not-allowed;
+        opacity: 0.45;
+      }
+
+      .field-note {
+        min-height: 17px;
+        margin: 7px 2px 0;
+        color: var(--muted);
+        font-size: 10px;
+        line-height: 1.5;
+      }
+
+      .turns-row {
+        margin-top: 16px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 16px;
+      }
+
+      .turns-row label {
+        color: var(--ink-soft);
+        font-size: 12px;
+        font-weight: 650;
+      }
+
+      .turns-input {
+        width: 66px;
+        min-height: 34px;
+        padding: 0 8px;
+        border: 1px solid var(--line);
+        border-radius: 9px;
+        color: var(--ink);
+        background: var(--paper-strong);
+        text-align: center;
+      }
+
+      .tool-catalog {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+      }
+
+      .tool-pill {
+        padding: 5px 8px;
+        border: 1px solid #bee0d9;
+        border-radius: 8px;
+        color: var(--teal);
+        background: var(--teal-soft);
+        font-family: var(--mono);
+        font-size: 9px;
+        font-weight: 700;
+      }
+
+      .metrics {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 8px;
+      }
+
+      .metric {
+        min-height: 74px;
+        padding: 12px;
+        border: 1px solid var(--line);
+        border-radius: 13px;
+        background: var(--paper-strong);
+      }
+
+      .metric span {
+        display: block;
+        margin-bottom: 8px;
+        color: var(--muted);
+        font-size: 9px;
+        font-weight: 800;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+
+      .metric strong {
+        display: block;
+        overflow: hidden;
+        color: var(--ink);
+        font-family: var(--mono);
+        font-size: 16px;
+        font-weight: 750;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .empty-detail {
+        padding: 16px;
+        border: 1px dashed var(--line-strong);
+        border-radius: 13px;
+        color: var(--muted);
+        font-size: 11px;
+        line-height: 1.55;
+        text-align: center;
+      }
+
+      .call-list,
+      .verify-list {
+        display: grid;
+        gap: 8px;
+      }
+
+      .call-card,
+      .verify-card {
+        padding: 11px 12px;
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        background: var(--paper-strong);
+      }
+
+      .call-top,
+      .verify-top {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+      }
+
+      .call-name {
+        overflow: hidden;
+        font-family: var(--mono);
+        font-size: 11px;
+        font-weight: 750;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .call-badge,
+      .verify-badge {
+        flex: 0 0 auto;
+        padding: 3px 6px;
+        border-radius: 6px;
+        color: var(--teal);
+        background: var(--teal-soft);
+        font-size: 8px;
+        font-weight: 850;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+      }
+
+      .call-badge.failed,
+      .verify-badge.miss {
+        color: var(--danger);
+        background: var(--danger-soft);
+      }
+
+      .call-meta,
+      .verify-meta {
+        margin-top: 7px;
+        color: var(--muted);
+        font-size: 9px;
+        line-height: 1.5;
+        overflow-wrap: anywhere;
+      }
+
+      details.raw {
+        border: 1px solid var(--line);
+        border-radius: 13px;
+        background: var(--paper-strong);
+      }
+
+      details.raw summary {
+        padding: 11px 12px;
+        cursor: pointer;
+        color: var(--ink-soft);
+        font-size: 11px;
+        font-weight: 700;
+      }
+
+      .raw pre {
+        max-height: 260px;
+        margin: 0;
+        padding: 0 12px 12px;
+        overflow: auto;
+        color: var(--ink-soft);
+        font-family: var(--mono);
+        font-size: 9px;
+        line-height: 1.6;
+        white-space: pre-wrap;
+        overflow-wrap: anywhere;
+      }
+
+      .hidden {
+        display: none !important;
+      }
+
+      @keyframes message-in {
+        from {
+          opacity: 0;
+          transform: translateY(7px);
+        }
+        to {
+          opacity: 1;
+          transform: translateY(0);
+        }
+      }
+
+      @keyframes pulse {
+        0%,
+        80%,
+        100% {
+          opacity: 0.3;
+          transform: scale(0.8);
+        }
+        40% {
+          opacity: 1;
+          transform: scale(1);
+        }
+      }
+
+      @media (max-width: 980px) {
+        .shell {
+          grid-template-columns: 1fr;
+        }
+
+        .workbench {
+          min-height: auto;
+        }
+
+        .inspector {
+          position: static;
+          max-height: none;
+        }
+
+        .inspector-body {
+          display: grid;
+          grid-template-columns: 1fr 1fr;
+        }
+
+        .panel-section {
+          border-right: 1px solid var(--line);
+        }
+      }
+
+      @media (max-width: 680px) {
+        .topbar,
+        .shell {
+          width: min(100% - 22px, 1440px);
+        }
+
+        .topbar {
+          padding: 16px 0 12px;
+        }
+
+        .brand-copy span {
+          display: none;
+        }
+
+        .docs-link {
+          display: none;
+        }
+
+        .server-status {
+          max-width: 140px;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+        }
+
+        .hero {
+          padding: 28px 22px 22px;
+        }
+
+        h1 {
+          font-size: 34px;
+        }
+
+        .conversation {
+          min-height: 280px;
+          max-height: 52vh;
+          padding: 24px 20px;
+        }
+
+        .bubble-wrap {
+          max-width: 86%;
+        }
+
+        .composer {
+          padding: 14px;
+        }
+
+        .shortcut-hint {
+          display: none;
+        }
+
+        .send-button {
+          min-width: 92px;
+        }
+
+        .inspector-body {
+          display: block;
+        }
+
+        .panel-section {
+          border-right: 0;
+        }
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        *,
+        *::before,
+        *::after {
+          scroll-behavior: auto !important;
+          animation-duration: 0.01ms !important;
+          animation-iteration-count: 1 !important;
+          transition-duration: 0.01ms !important;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="brand" aria-label="MCP Agent Lab">
+        <div class="brand-mark" aria-hidden="true">A/</div>
+        <div class="brand-copy">
+          <strong>MCP Agent Lab</strong>
+          <span>Local tool-calling test bench</span>
+        </div>
+      </div>
+      <div class="topbar-actions">
+        <a class="docs-link" href="/docs" target="_blank" rel="noreferrer">API Docs ↗</a>
+        <div id="serverStatus" class="server-status" role="status" aria-live="polite">
+          <span class="status-dot" aria-hidden="true"></span>
+          <span id="serverStatusText">正在連線</span>
+        </div>
+      </div>
+    </header>
+
+    <main class="shell">
+      <section class="workbench" aria-labelledby="pageTitle">
+        <div class="hero">
+          <div class="eyebrow">Single-run workspace</div>
+          <h1 id="pageTitle">測試每一次<br />agent 決策。</h1>
+          <p>
+            送出一個獨立任務，檢查回覆、工具路由與術語驗證。預設 fake 模式不需要模型憑證，
+            適合先確認整條 MCP 線路是否正常。
+          </p>
+          <div class="examples" aria-label="範例提示">
+            <button class="example-chip" type="button" data-profile="generic" data-prompt="現在台北幾點？">
+              台北時間
+            </button>
+            <button class="example-chip" type="button" data-profile="generic" data-prompt="台北今天天氣如何？">
+              天氣查詢
+            </button>
+            <button class="example-chip" type="button" data-profile="generic" data-prompt="請用中文向客戶打招呼">
+              客戶問候
+            </button>
+            <button
+              class="example-chip"
+              type="button"
+              data-profile="translation"
+              data-prompt="請幫我翻譯：客戶申請提高臨時額度"
+            >
+              術語翻譯
+            </button>
+          </div>
+        </div>
+
+        <div id="conversation" class="conversation" aria-live="polite">
+          <div id="emptyState" class="empty-state">
+            <div class="empty-state-inner">
+              <div class="empty-symbol" aria-hidden="true">&gt;_</div>
+              <strong>準備好執行第一個測試</strong>
+              <span>選一個範例，或在下方輸入想交給 agent 的任務。</span>
+            </div>
+          </div>
+        </div>
+
+        <form id="runForm" class="composer">
+          <div class="composer-box">
+            <label class="hidden" for="promptInput">測試訊息</label>
+            <textarea
+              id="promptInput"
+              maxlength="12000"
+              placeholder="輸入任務，例如：請幫我翻譯……"
+              autocomplete="off"
+              aria-describedby="charCount shortcutHint"
+              required
+            ></textarea>
+            <div class="composer-actions">
+              <div class="input-meta">
+                <span id="charCount">0 / 12000</span>
+                <span id="shortcutHint" class="shortcut-hint"><kbd>⌘</kbd> + <kbd>Enter</kbd> 送出</span>
+              </div>
+              <button id="sendButton" class="send-button" type="submit">
+                <span id="sendLabel">執行測試</span>
+                <span aria-hidden="true">→</span>
+              </button>
+            </div>
+          </div>
+        </form>
+      </section>
+
+      <aside class="inspector" aria-labelledby="inspectorTitle">
+        <div class="inspector-header">
+          <h2 id="inspectorTitle">Run Inspector</h2>
+          <button id="clearButton" class="clear-button" type="button">清除結果</button>
+        </div>
+
+        <div class="inspector-body">
+          <section class="panel-section" aria-labelledby="gatewayLabel">
+            <h3 id="gatewayLabel" class="section-label">Gateway</h3>
+            <div
+              class="segmented"
+              role="radiogroup"
+              aria-labelledby="gatewayLabel"
+              aria-describedby="gatewayNote"
+            >
+              <label>
+                <input type="radio" name="gateway" value="fake" checked />
+                <span>Fake</span>
+              </label>
+              <label id="httpGatewayLabel">
+                <input id="httpGateway" type="radio" name="gateway" value="http" />
+                <span>HTTP</span>
+              </label>
+            </div>
+            <p id="gatewayNote" class="field-note">Fake 模式可離線驗證工具流程。</p>
+
+            <h3 id="profileLabel" class="section-label spaced">Profile</h3>
+            <div class="segmented" role="radiogroup" aria-labelledby="profileLabel">
+              <label>
+                <input type="radio" name="profile" value="generic" checked />
+                <span>Generic</span>
+              </label>
+              <label>
+                <input type="radio" name="profile" value="translation" />
+                <span>Translation</span>
+              </label>
+            </div>
+
+            <div class="turns-row">
+              <label for="maxTurns">最大回合數</label>
+              <input id="maxTurns" class="turns-input" type="number" min="1" max="20" value="6" />
+            </div>
+          </section>
+
+          <section class="panel-section" aria-labelledby="toolsLabel">
+            <h3 id="toolsLabel" class="section-label">
+              Available tools
+              <span id="toolCount">—</span>
+            </h3>
+            <div id="toolCatalog" class="tool-catalog">
+              <span class="tool-pill">loading…</span>
+            </div>
+          </section>
+
+          <section class="panel-section" aria-labelledby="metricsLabel">
+            <h3 id="metricsLabel" class="section-label">Last run</h3>
+            <div class="metrics">
+              <div class="metric"><span>Turns</span><strong id="metricTurns">—</strong></div>
+              <div class="metric"><span>Tool calls</span><strong id="metricCalls">—</strong></div>
+              <div class="metric"><span>Stop reason</span><strong id="metricStop">—</strong></div>
+              <div class="metric"><span>Latency</span><strong id="metricLatency">—</strong></div>
+            </div>
+          </section>
+
+          <section class="panel-section" aria-labelledby="callsLabel">
+            <h3 id="callsLabel" class="section-label">Tool trace</h3>
+            <div id="callList" class="call-list">
+              <div class="empty-detail">執行後會在這裡顯示工具名稱、參數與結果狀態。</div>
+            </div>
+          </section>
+
+          <section id="verifySection" class="panel-section hidden" aria-labelledby="verifyLabel">
+            <h3 id="verifyLabel" class="section-label">
+              Terminology check
+              <span id="verifyRate">—</span>
+            </h3>
+            <div id="verifyList" class="verify-list"></div>
+          </section>
+
+          <section class="panel-section" aria-labelledby="rawLabel">
+            <h3 id="rawLabel" class="section-label">Response data</h3>
+            <details class="raw">
+              <summary>查看完整 JSON</summary>
+              <pre id="rawOutput">尚無資料</pre>
+            </details>
+          </section>
+        </div>
+      </aside>
+    </main>
+
+    <script>
+      (() => {
+        "use strict";
+
+        const state = { running: false, pendingMessage: null, httpGatewayConfigured: false };
+        const conversation = document.querySelector("#conversation");
+        const emptyState = document.querySelector("#emptyState");
+        const form = document.querySelector("#runForm");
+        const promptInput = document.querySelector("#promptInput");
+        const charCount = document.querySelector("#charCount");
+        const sendButton = document.querySelector("#sendButton");
+        const sendLabel = document.querySelector("#sendLabel");
+        const maxTurns = document.querySelector("#maxTurns");
+        const status = document.querySelector("#serverStatus");
+        const statusText = document.querySelector("#serverStatusText");
+        const httpGateway = document.querySelector("#httpGateway");
+        const clearButton = document.querySelector("#clearButton");
+        const gatewayNote = document.querySelector("#gatewayNote");
+        const toolCatalog = document.querySelector("#toolCatalog");
+        const toolCount = document.querySelector("#toolCount");
+        const rawOutput = document.querySelector("#rawOutput");
+
+        const metricTurns = document.querySelector("#metricTurns");
+        const metricCalls = document.querySelector("#metricCalls");
+        const metricStop = document.querySelector("#metricStop");
+        const metricLatency = document.querySelector("#metricLatency");
+        const callList = document.querySelector("#callList");
+        const verifySection = document.querySelector("#verifySection");
+        const verifyList = document.querySelector("#verifyList");
+        const verifyRate = document.querySelector("#verifyRate");
+
+        function selected(name) {
+          return document.querySelector(`input[name="${name}"]:checked`).value;
+        }
+
+        function selectOption(name, value) {
+          const option = document.querySelector(`input[name="${name}"][value="${value}"]`);
+          if (option && !option.disabled) option.checked = true;
+        }
+
+        function setStatus(kind, text) {
+          status.classList.remove("online", "offline");
+          if (kind) status.classList.add(kind);
+          statusText.textContent = text;
+        }
+
+        function addMessage(role, text, options = {}) {
+          emptyState.classList.add("hidden");
+          const message = document.createElement("article");
+          message.className = `message ${role}${options.error ? " error" : ""}`;
+
+          const avatar = document.createElement("div");
+          avatar.className = "avatar";
+          avatar.setAttribute("aria-hidden", "true");
+          avatar.textContent = role === "user" ? "YOU" : "AI";
+
+          const wrap = document.createElement("div");
+          wrap.className = "bubble-wrap";
+          const label = document.createElement("div");
+          label.className = "message-label";
+          label.textContent = role === "user" ? "你" : options.error ? "執行錯誤" : "Agent";
+          const bubble = document.createElement("div");
+          bubble.className = "bubble";
+          bubble.textContent = text;
+
+          wrap.append(label, bubble);
+          message.append(avatar, wrap);
+          conversation.append(message);
+          conversation.scrollTop = conversation.scrollHeight;
+          return message;
+        }
+
+        function addPendingMessage() {
+          emptyState.classList.add("hidden");
+          const message = document.createElement("article");
+          message.className = "message assistant";
+          const avatar = document.createElement("div");
+          avatar.className = "avatar";
+          avatar.setAttribute("aria-hidden", "true");
+          avatar.textContent = "AI";
+          const wrap = document.createElement("div");
+          wrap.className = "bubble-wrap";
+          const label = document.createElement("div");
+          label.className = "message-label";
+          label.textContent = "Agent 正在執行";
+          const bubble = document.createElement("div");
+          bubble.className = "bubble";
+          const typing = document.createElement("span");
+          typing.className = "typing";
+          typing.setAttribute("aria-label", "執行中");
+          typing.append(document.createElement("i"), document.createElement("i"), document.createElement("i"));
+          bubble.append(typing);
+          wrap.append(label, bubble);
+          message.append(avatar, wrap);
+          conversation.append(message);
+          conversation.scrollTop = conversation.scrollHeight;
+          return message;
+        }
+
+        function setRunning(running) {
+          state.running = running;
+          sendButton.disabled = running;
+          promptInput.disabled = running;
+          maxTurns.disabled = running;
+          clearButton.disabled = running;
+          document.querySelectorAll('input[name="profile"], input[name="gateway"]').forEach((input) => {
+            input.disabled = running || (input === httpGateway && !state.httpGatewayConfigured);
+          });
+          document.querySelectorAll(".example-chip").forEach((button) => {
+            button.disabled = running;
+          });
+          sendLabel.textContent = running ? "執行中" : "執行測試";
+        }
+
+        function resetInspector() {
+          metricTurns.textContent = "—";
+          metricCalls.textContent = "—";
+          metricStop.textContent = "—";
+          metricLatency.textContent = "—";
+          callList.replaceChildren(makeEmpty("執行後會在這裡顯示工具名稱、參數與結果狀態。"));
+          verifySection.classList.add("hidden");
+          verifyList.replaceChildren();
+          verifyRate.textContent = "—";
+          rawOutput.textContent = "尚無資料";
+        }
+
+        function makeEmpty(text) {
+          const item = document.createElement("div");
+          item.className = "empty-detail";
+          item.textContent = text;
+          return item;
+        }
+
+        function renderTools(tools) {
+          toolCatalog.replaceChildren();
+          toolCount.textContent = String(tools.length);
+          if (!tools.length) {
+            toolCatalog.append(makeEmpty("沒有可用工具"));
+            return;
+          }
+          for (const name of tools) {
+            const pill = document.createElement("span");
+            pill.className = "tool-pill";
+            pill.textContent = name;
+            toolCatalog.append(pill);
+          }
+        }
+
+        function renderCalls(calls) {
+          callList.replaceChildren();
+          if (!calls.length) {
+            callList.append(makeEmpty("這次執行沒有呼叫工具。"));
+            return;
+          }
+          calls.forEach((call, index) => {
+            const card = document.createElement("div");
+            card.className = "call-card";
+            const top = document.createElement("div");
+            top.className = "call-top";
+            const name = document.createElement("span");
+            name.className = "call-name";
+            name.textContent = `${index + 1}. ${call.name}`;
+            const badge = document.createElement("span");
+            badge.className = `call-badge${call.ok ? "" : " failed"}`;
+            badge.textContent = call.ok ? "success" : "failed";
+            const meta = document.createElement("div");
+            meta.className = "call-meta";
+            const argumentsText = JSON.stringify(call.arguments || {});
+            meta.textContent = `turn ${call.turn} · ${call.initiator} · ${argumentsText}${call.error ? ` · ${call.error}` : ""}`;
+            top.append(name, badge);
+            card.append(top, meta);
+            callList.append(card);
+          });
+        }
+
+        function renderVerify(verify) {
+          if (!verify) {
+            verifySection.classList.add("hidden");
+            verifyList.replaceChildren();
+            return;
+          }
+          verifySection.classList.remove("hidden");
+          verifyRate.textContent = `${Math.round((verify.hit_rate || 0) * 100)}%`;
+          verifyList.replaceChildren();
+          const results = Array.isArray(verify.results) ? verify.results : [];
+          if (!results.length) {
+            verifyList.append(makeEmpty("沒有需要檢查的術語。"));
+            return;
+          }
+          for (const item of results) {
+            const card = document.createElement("div");
+            card.className = "verify-card";
+            const top = document.createElement("div");
+            top.className = "verify-top";
+            const name = document.createElement("span");
+            name.className = "call-name";
+            name.textContent = `${item.zh} → ${item.expected_en}`;
+            const badge = document.createElement("span");
+            const passed = String(item.verdict || "").toUpperCase() === "HIT";
+            badge.className = `verify-badge${passed ? "" : " miss"}`;
+            badge.textContent = item.verdict || "unknown";
+            const meta = document.createElement("div");
+            meta.className = "verify-meta";
+            meta.textContent = item.found ? `找到：${item.found}` : "未在回覆中找到預期術語";
+            top.append(name, badge);
+            card.append(top, meta);
+            verifyList.append(card);
+          }
+        }
+
+        function renderResult(envelope, clientElapsedMs) {
+          const result = envelope.result || {};
+          const metrics = result.metrics || {};
+          metricTurns.textContent = String(metrics.turns ?? "—");
+          metricCalls.textContent = String(metrics.tool_calls ?? "—");
+          metricStop.textContent = metrics.stop_reason || "—";
+          metricLatency.textContent = `${envelope.duration_ms ?? clientElapsedMs} ms`;
+          renderCalls(Array.isArray(result.tool_calls) ? result.tool_calls : []);
+          renderVerify(result.verify);
+          rawOutput.textContent = JSON.stringify(envelope, null, 2);
+        }
+
+        function errorMessage(payload, fallback) {
+          if (payload && payload.error && typeof payload.error.message === "string") {
+            return payload.error.message;
+          }
+          return fallback;
+        }
+
+        async function loadHealth() {
+          try {
+            const response = await fetch("/api/v1/capabilities", { cache: "no-store" });
+            if (!response.ok) throw new Error(`HTTP ${response.status}`);
+            const health = await response.json();
+            setStatus("online", "Agent server online");
+            renderTools(Array.isArray(health.tools) ? health.tools : []);
+            state.httpGatewayConfigured = Boolean(health.http_gateway_configured);
+            if (!state.httpGatewayConfigured) {
+              httpGateway.disabled = true;
+              gatewayNote.textContent = "HTTP 尚未設定；請先在 .env 加入 GATEWAY_BASE_URL。";
+              selectOption("gateway", "fake");
+            } else {
+              httpGateway.disabled = state.running;
+              gatewayNote.textContent = "可用 fake 驗證流程，或切換 HTTP 呼叫真實模型。";
+            }
+          } catch (error) {
+            setStatus("offline", "Agent server unavailable");
+            state.httpGatewayConfigured = false;
+            httpGateway.disabled = true;
+            gatewayNote.textContent = "無法取得伺服器狀態，請確認本機服務仍在執行。";
+            renderTools([]);
+          }
+        }
+
+        async function runAgent(text) {
+          const requestedTurns = Number.parseInt(maxTurns.value, 10);
+          if (!Number.isInteger(requestedTurns) || requestedTurns < 1 || requestedTurns > 20) {
+            maxTurns.focus();
+            addMessage("assistant", "最大回合數必須介於 1 到 20。", { error: true });
+            return;
+          }
+
+          resetInspector();
+          addMessage("user", text);
+          state.pendingMessage = addPendingMessage();
+          setRunning(true);
+          const startedAt = performance.now();
+          let payload = null;
+
+          try {
+            const response = await fetch("/api/v1/runs", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                text,
+                gateway: selected("gateway"),
+                profile: selected("profile"),
+                max_turns: requestedTurns,
+              }),
+            });
+            try {
+              payload = await response.json();
+            } catch (_) {
+              // The status code still gives a useful fallback below.
+            }
+            if (!response.ok) {
+              throw new Error(errorMessage(payload, `伺服器回傳 HTTP ${response.status}`));
+            }
+
+            const elapsed = Math.max(1, Math.round(performance.now() - startedAt));
+            state.pendingMessage.remove();
+            state.pendingMessage = null;
+            const result = payload.result || {};
+            addMessage("assistant", result.output || "（Agent 回傳空白內容）");
+            renderResult(payload, elapsed);
+            setStatus("online", "Agent server online");
+          } catch (error) {
+            if (state.pendingMessage) state.pendingMessage.remove();
+            state.pendingMessage = null;
+            const message = error instanceof Error ? error.message : "執行失敗，請查看伺服器紀錄。";
+            addMessage("assistant", message, { error: true });
+            metricStop.textContent = "error";
+            metricLatency.textContent = `${Math.max(1, Math.round(performance.now() - startedAt))} ms`;
+            rawOutput.textContent = payload
+              ? JSON.stringify(payload, null, 2)
+              : JSON.stringify({ error: { message } }, null, 2);
+          } finally {
+            setRunning(false);
+            promptInput.focus();
+          }
+        }
+
+        form.addEventListener("submit", (event) => {
+          event.preventDefault();
+          if (state.running) return;
+          const text = promptInput.value.trim();
+          if (!text) {
+            promptInput.focus();
+            return;
+          }
+          runAgent(text);
+        });
+
+        promptInput.addEventListener("input", () => {
+          charCount.textContent = `${promptInput.value.length} / 12000`;
+        });
+
+        promptInput.addEventListener("keydown", (event) => {
+          if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
+            event.preventDefault();
+            form.requestSubmit();
+          }
+        });
+
+        document.querySelectorAll(".example-chip").forEach((button) => {
+          button.addEventListener("click", () => {
+            promptInput.value = button.dataset.prompt || "";
+            selectOption("profile", button.dataset.profile || "generic");
+            charCount.textContent = `${promptInput.value.length} / 12000`;
+            promptInput.focus();
+          });
+        });
+
+        clearButton.addEventListener("click", () => {
+          if (state.running) return;
+          conversation.querySelectorAll(".message").forEach((message) => message.remove());
+          emptyState.classList.remove("hidden");
+          promptInput.value = "";
+          charCount.textContent = "0 / 12000";
+          resetInspector();
+          promptInput.focus();
+        });
+
+        document.querySelectorAll('input[name="gateway"]').forEach((input) => {
+          input.addEventListener("change", () => {
+            gatewayNote.textContent =
+              selected("gateway") === "fake"
+                ? "Fake 模式可離線驗證工具流程。"
+                : "HTTP 模式會使用伺服器端 .env 內的 gateway 設定。";
+          });
+        });
+
+        resetInspector();
+        loadHealth();
+      })();
+    </script>
+  </body>
+</html>

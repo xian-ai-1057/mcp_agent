@@ -120,7 +120,7 @@ class TestImportingDoesNotTouchTheEnvironment:
         script = (
             "import os, json, sys; "
             "before = dict(os.environ); "
-            "import agent.cli, agent.gateway, agent.loop, agent.config, evals.run_eval; "
+            "import agent.cli, agent.gateway, agent.loop, agent.config, agent.web, evals.run_eval; "
             "after = dict(os.environ); "
             "print(json.dumps(sorted(set(after) - set(before))))"
         )

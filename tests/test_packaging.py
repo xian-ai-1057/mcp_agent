@@ -37,6 +37,9 @@ def test_wheel_contains_assets_and_runs_from_an_install(tmp_path):
     assert "fixtures/routing_cases.json" in names
     assert "mcp_servers/rag_upload/server.py" in names
     assert "capabilities/translation/policy.py" in names
+    assert "agent/web.py" in names
+    assert "agent/static/index.html" in names
+    assert "contracts/api.py" in names
 
     install_dir = tmp_path / "installed"
     subprocess.run(
