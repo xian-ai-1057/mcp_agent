@@ -1,0 +1,72 @@
+zh,en,aliases,category
+額度,credit limit,,授信
+臨時額度,temporary credit limit,,授信
+永久額度,permanent credit limit,,授信
+信用卡,credit card,,授信
+授信,credit extension,,授信
+徵信,credit investigation,,授信
+聯徵中心,Joint Credit Information Center (JCIC),聯徵|聯合徵信中心,授信
+擔保品,collateral,,授信
+保證人,guarantor,,授信
+動撥,drawdown,撥貸,授信
+循環信用,revolving credit,,授信
+分期付款,installment payment,分期,授信
+帳戶,account,,帳戶
+警示帳戶,alert account,,帳戶
+警示帳戶通報機制,alert account reporting mechanism,,帳戶
+靜止戶,dormant account,,帳戶
+約定轉入帳戶,designated transfer-in account,約定帳戶,帳戶
+開戶,account opening,,帳戶
+銷戶,account closing,,帳戶
+轉帳,funds transfer,,支付
+匯款,remittance,,支付
+扣款,debit,,支付
+代收代付,collection and payment service,,支付
+自動扣繳,auto-debit,,支付
+交易明細,transaction details,,支付
+退款,refund,,支付
+洗錢防制,Anti-Money Laundering (AML),防制洗錢,法遵
+認識你的客戶,Know Your Customer (KYC),KYC,法遵
+實質受益人,beneficial owner,,法遵
+可疑交易申報,Suspicious Transaction Report (STR),,法遵
+個資保護,personal data protection,,法遵
+法令遵循,regulatory compliance,,法遵
+盡職調查,due diligence,,法遵
+信用風險,credit risk,,風控
+作業風險,operational risk,,風控
+逾期放款,non-performing loan (NPL),逾放,風控
+呆帳,bad debt,,風控
+風險胃納,risk appetite,,風控
+壓力測試,stress test,,風控
+詐騙,fraud,,風控
+內部控制,internal control,內控,風控
+活期存款,demand deposit,活存,存款
+定期存款,time deposit,定存,存款
+綜合存款,integrated deposit account,,存款
+利率,interest rate,,存款
+牌告利率,posted interest rate,,存款
+存摺,passbook,,存款
+外匯,foreign exchange,,外匯
+匯率,exchange rate,,外匯
+即期匯率,spot exchange rate,,外匯
+遠期外匯,forward foreign exchange,,外匯
+結匯,foreign exchange settlement,,外匯
+外幣帳戶,foreign currency account,,外匯
+財富管理,wealth management,,財富管理
+理財專員,relationship manager,理專,財富管理
+資產配置,asset allocation,,財富管理
+基金申購,fund subscription,,財富管理
+風險屬性評估,risk profile assessment,,財富管理
+信託,trust,,財富管理
+行動銀行,mobile banking,,數位金融
+網路銀行,online banking,網銀,數位金融
+電子帳單,e-statement,,數位金融
+生物辨識,biometric authentication,,數位金融
+一次性密碼,one-time password (OTP),OTP,數位金融
+數位存款帳戶,digital deposit account,,數位金融
+客服中心,customer service center,,客服
+臨櫃,over-the-counter service,,客服
+申訴,complaint,,客服
+服務時間,service hours,,客服
+掛失,report of loss,,客服
+補發,reissuance,,客服
