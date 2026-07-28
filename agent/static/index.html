@@ -1347,7 +1347,8 @@
             state.httpGatewayConfigured = Boolean(health.http_gateway_configured);
             if (!state.httpGatewayConfigured) {
               httpGateway.disabled = true;
-              gatewayNote.textContent = "HTTP 尚未設定；請先在 .env 加入 GATEWAY_BASE_URL。";
+              gatewayNote.textContent =
+                "HTTP Gateway 未設定或設定無效；請檢查伺服器端 .env。";
               selectOption("gateway", "fake");
             } else {
               httpGateway.disabled = state.running;

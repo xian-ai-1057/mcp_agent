@@ -11,6 +11,8 @@ See `specs/003-agent-client/spec.md` §2.
 
 import ipaddress
 import json
+import logging
+import math
 import os
 import uuid
 from dataclasses import dataclass, field
@@ -18,6 +20,22 @@ from typing import Any, Protocol
 from urllib.parse import urlsplit
 
 import httpx
+
+logger = logging.getLogger(__name__)
+
+
+def _env_flag(name: str, default: bool = False) -> bool:
+    """Read an explicit boolean operator setting from the environment."""
+
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    normalized = raw.strip().lower()
+    if normalized in {"1", "true", "yes", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "off"}:
+        return False
+    raise GatewayError(f"{name} must be true or false")
 
 
 class GatewayError(Exception):
@@ -175,7 +193,17 @@ class HTTPGateway:
         model: str,
         timeout: float = 60.0,
         client: httpx.AsyncClient | None = None,
+        *,
+        allow_insecure_http: bool = False,
     ) -> None:
+        if type(allow_insecure_http) is not bool:
+            raise GatewayError("allow_insecure_http must be a boolean")
+        try:
+            timeout_value = float(timeout)
+        except (TypeError, ValueError) as exc:
+            raise GatewayError("GATEWAY_TIMEOUT must be a positive finite number") from exc
+        if not math.isfinite(timeout_value) or timeout_value <= 0:
+            raise GatewayError("GATEWAY_TIMEOUT must be a positive finite number")
         if not base_url:
             raise GatewayError("GATEWAY_BASE_URL is not set")
         parsed = urlsplit(base_url)
@@ -187,19 +215,28 @@ class HTTPGateway:
             _ = parsed.port
         except ValueError as exc:
             raise GatewayError("GATEWAY_BASE_URL must contain a valid port") from exc
+        if parsed.scheme not in {"http", "https"}:
+            raise GatewayError("GATEWAY_BASE_URL must use HTTP or HTTPS")
         loopback = parsed.hostname.lower() == "localhost"
         try:
             loopback = loopback or ipaddress.ip_address(parsed.hostname).is_loopback
         except ValueError:
             pass
-        if parsed.scheme != "https" and not (parsed.scheme == "http" and loopback):
+        if parsed.scheme == "http" and not loopback and not allow_insecure_http:
             raise GatewayError(
-                "GATEWAY_BASE_URL must use HTTPS (HTTP is allowed only for loopback)"
+                "GATEWAY_BASE_URL must use HTTPS for non-loopback hosts; set "
+                "GATEWAY_ALLOW_INSECURE_HTTP=true to explicitly allow plaintext HTTP"
+            )
+        if parsed.scheme == "http" and not loopback:
+            logger.warning(
+                "GATEWAY_ALLOW_INSECURE_HTTP is enabled; gateway credentials and "
+                "agent data will be sent over unencrypted HTTP, and responses could "
+                "be modified to inject tool calls"
             )
         self.base_url = base_url.rstrip("/")
         self.api_key = api_key
         self.model = model
-        self.timeout = timeout
+        self.timeout = timeout_value
         self._client = client
         self._owns_client = client is None
 
@@ -209,13 +246,27 @@ class HTTPGateway:
             base_url=os.environ.get("GATEWAY_BASE_URL", ""),
             api_key=os.environ.get("GATEWAY_API_KEY", ""),
             model=os.environ.get("GATEWAY_MODEL", "fedgpt-medium"),
-            timeout=float(os.environ.get("GATEWAY_TIMEOUT", "60")),
+            timeout=os.environ.get("GATEWAY_TIMEOUT", "60"),
+            allow_insecure_http=_env_flag("GATEWAY_ALLOW_INSECURE_HTTP"),
         )
 
     @staticmethod
-    def configured() -> bool:
-        """True when the environment carries enough to reach a real gateway."""
+    def present() -> bool:
+        """True when a gateway URL is present, even if another setting is invalid."""
+
         return bool(os.environ.get("GATEWAY_BASE_URL"))
+
+    @staticmethod
+    def configured() -> bool:
+        """True when the environment contains a valid gateway configuration."""
+
+        if not HTTPGateway.present():
+            return False
+        try:
+            HTTPGateway.from_env()
+        except (GatewayError, ValueError):
+            return False
+        return True
 
     def _http(self) -> httpx.AsyncClient:
         if self._client is None:

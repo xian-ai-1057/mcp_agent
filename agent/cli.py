@@ -89,7 +89,7 @@ def build_parser() -> argparse.ArgumentParser:
 def _make_gateway(choice: str, env_source: Path | None) -> Gateway:
     if choice == "fake":
         return RuleBasedGateway()
-    if not HTTPGateway.configured():
+    if not HTTPGateway.present():
         raise GatewayError(
             "GATEWAY_BASE_URL is not set —— "
             f"{describe_env_source(env_source)}。\n"
