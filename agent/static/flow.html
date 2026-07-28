@@ -1,0 +1,3034 @@
+<!doctype html>
+<html lang="zh-Hant">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light" />
+    <title>MCP Agent 流程動畫</title>
+    <style>
+      :root {
+        --canvas: #f1efe8;
+        --paper: #fffdf8;
+        --paper-strong: #ffffff;
+        --ink: #172126;
+        --ink-soft: #425057;
+        --muted: #5c6a70;
+        --line: #dcded8;
+        --line-strong: #c6cbc7;
+        --accent: #d84c4c;
+        --accent-dark: #aa3036;
+        --accent-soft: #fde9e6;
+        --teal: #1d746c;
+        --teal-soft: #e0f1ed;
+        --amber: #a66813;
+        --amber-soft: #fff0cc;
+        --danger: #a52f36;
+        --danger-soft: #fde7e8;
+        --shadow: 0 22px 60px rgba(31, 42, 42, 0.1);
+        --shadow-soft: 0 8px 26px rgba(31, 42, 42, 0.07);
+        --radius-xl: 28px;
+        --radius-lg: 20px;
+        --radius-md: 14px;
+        --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+        --sans: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI",
+          "Noto Sans TC", "PingFang TC", "Microsoft JhengHei", sans-serif;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html {
+        min-width: 320px;
+        background: var(--canvas);
+      }
+
+      body {
+        min-height: 100vh;
+        margin: 0;
+        color: var(--ink);
+        font-family: var(--sans);
+        background:
+          radial-gradient(circle at 7% 4%, rgba(216, 76, 76, 0.09), transparent 25rem),
+          radial-gradient(circle at 96% 92%, rgba(29, 116, 108, 0.1), transparent 28rem),
+          var(--canvas);
+      }
+
+      button,
+      textarea,
+      input,
+      select {
+        font: inherit;
+      }
+
+      button {
+        color: inherit;
+      }
+
+      button:focus-visible,
+      input:focus-visible,
+      select:focus-visible,
+      summary:focus-visible,
+      [tabindex]:focus-visible {
+        outline: 3px solid rgba(29, 116, 108, 0.25);
+        outline-offset: 2px;
+      }
+
+      .hidden {
+        display: none !important;
+      }
+
+      /* ---------- topbar ---------- */
+
+      .topbar {
+        width: min(1520px, calc(100% - 40px));
+        margin: 0 auto;
+        padding: 24px 0 16px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 20px;
+        flex-wrap: wrap;
+      }
+
+      .brand {
+        display: flex;
+        align-items: center;
+        gap: 13px;
+      }
+
+      .brand-mark {
+        width: 43px;
+        height: 43px;
+        display: grid;
+        place-items: center;
+        border-radius: 14px;
+        color: white;
+        background: var(--ink);
+        box-shadow: var(--shadow-soft);
+        font-size: 15px;
+        font-weight: 800;
+        letter-spacing: -0.04em;
+      }
+
+      .brand-copy strong {
+        display: block;
+        font-size: 16px;
+        line-height: 1.2;
+        letter-spacing: -0.01em;
+      }
+
+      .brand-copy span {
+        display: block;
+        margin-top: 4px;
+        color: var(--muted);
+        font-size: 12px;
+      }
+
+      .topbar-actions {
+        display: flex;
+        align-items: center;
+        gap: 9px;
+      }
+
+      .docs-link {
+        min-height: 34px;
+        display: inline-flex;
+        align-items: center;
+        padding: 0 13px;
+        border: 1px solid var(--line);
+        border-radius: 999px;
+        color: var(--ink-soft);
+        background: rgba(255, 253, 248, 0.72);
+        font-size: 11px;
+        font-weight: 700;
+        text-decoration: none;
+        backdrop-filter: blur(12px);
+      }
+
+      .docs-link:hover {
+        border-color: var(--teal);
+        color: var(--teal);
+      }
+
+      .server-status {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        min-height: 34px;
+        padding: 0 13px;
+        border: 1px solid var(--line);
+        border-radius: 999px;
+        color: var(--ink-soft);
+        background: rgba(255, 253, 248, 0.72);
+        font-size: 12px;
+        font-weight: 650;
+        backdrop-filter: blur(12px);
+      }
+
+      .status-dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: var(--amber);
+        box-shadow: 0 0 0 4px rgba(166, 104, 19, 0.12);
+      }
+
+      .server-status.online .status-dot {
+        background: var(--teal);
+        box-shadow: 0 0 0 4px rgba(29, 116, 108, 0.12);
+      }
+
+      .server-status.offline .status-dot {
+        background: var(--danger);
+        box-shadow: 0 0 0 4px rgba(165, 47, 54, 0.12);
+      }
+
+      /* ---------- shell ---------- */
+
+      .shell {
+        width: min(1520px, calc(100% - 40px));
+        margin: 0 auto;
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) 330px;
+        gap: 18px;
+        align-items: start;
+      }
+
+      .stage,
+      .panel,
+      .compare {
+        border: 1px solid rgba(198, 203, 199, 0.8);
+        border-radius: var(--radius-xl);
+        background: rgba(255, 253, 248, 0.92);
+        box-shadow: var(--shadow);
+        backdrop-filter: blur(18px);
+      }
+
+      .stage {
+        min-width: 0;
+        overflow: hidden;
+      }
+
+      .intro {
+        padding: 20px 28px 16px;
+        border-bottom: 1px solid var(--line);
+      }
+
+      .eyebrow {
+        display: inline-flex;
+        align-items: center;
+        gap: 7px;
+        margin-bottom: 9px;
+        color: var(--accent-dark);
+        font-family: var(--mono);
+        font-size: 11px;
+        font-weight: 750;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+      }
+
+      .eyebrow::before {
+        content: "";
+        width: 18px;
+        height: 2px;
+        border-radius: 99px;
+        background: var(--accent);
+      }
+
+      h1 {
+        max-width: 900px;
+        margin: 0;
+        font-size: clamp(21px, 2.1vw, 29px);
+        line-height: 1.2;
+        letter-spacing: -0.03em;
+        text-wrap: balance;
+      }
+
+      .intro p {
+        max-width: 900px;
+        margin: 9px 0 0;
+        color: var(--ink-soft);
+        font-size: 13px;
+        line-height: 1.7;
+      }
+
+      /* ---------- controls ---------- */
+
+      .controls {
+        padding: 14px 28px 13px;
+        border-bottom: 1px solid var(--line);
+        display: grid;
+        gap: 11px;
+        background: rgba(247, 246, 241, 0.6);
+      }
+
+      .control-row {
+        display: flex;
+        align-items: flex-end;
+        flex-wrap: wrap;
+        gap: 14px 18px;
+      }
+
+      .control-group {
+        min-width: 0;
+      }
+
+      .control-label {
+        display: block;
+        margin: 0 0 6px 2px;
+        color: var(--muted);
+        font-size: 10px;
+        font-weight: 800;
+        letter-spacing: 0.11em;
+        text-transform: uppercase;
+      }
+
+      .segmented {
+        display: inline-grid;
+        grid-auto-flow: column;
+        gap: 5px;
+        padding: 4px;
+        border: 1px solid var(--line);
+        border-radius: 13px;
+        background: #eeeee9;
+      }
+
+      .segmented label {
+        position: relative;
+        cursor: pointer;
+      }
+
+      .segmented input {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        opacity: 0;
+      }
+
+      .segmented span {
+        min-height: 33px;
+        display: grid;
+        place-items: center;
+        padding: 0 12px;
+        border-radius: 9px;
+        color: var(--muted);
+        font-size: 12px;
+        font-weight: 700;
+        white-space: nowrap;
+        transition: color 150ms ease, background 150ms ease, box-shadow 150ms ease;
+      }
+
+      .segmented input:checked + span {
+        color: var(--ink);
+        background: var(--paper-strong);
+        box-shadow: 0 3px 10px rgba(31, 42, 42, 0.08);
+      }
+
+      .segmented input:focus-visible + span {
+        outline: 3px solid rgba(29, 116, 108, 0.25);
+        outline-offset: 2px;
+      }
+
+      .segmented input:disabled + span {
+        cursor: not-allowed;
+        opacity: 0.45;
+      }
+
+      .toggle {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        min-height: 33px;
+        padding: 0 12px;
+        border: 1px solid var(--line);
+        border-radius: 11px;
+        background: var(--paper-strong);
+        color: var(--ink-soft);
+        cursor: pointer;
+        font-size: 12px;
+        font-weight: 650;
+        white-space: nowrap;
+      }
+
+      .toggle input {
+        width: 15px;
+        height: 15px;
+        margin: 0;
+        accent-color: var(--teal);
+      }
+
+      .transport {
+        display: inline-flex;
+        gap: 6px;
+      }
+
+      .tbtn {
+        min-width: 40px;
+        min-height: 36px;
+        display: inline-grid;
+        place-items: center;
+        padding: 0 11px;
+        border: 1px solid var(--line-strong);
+        border-radius: 11px;
+        background: var(--paper-strong);
+        cursor: pointer;
+        font-size: 13px;
+        font-weight: 700;
+        transition: border-color 150ms ease, color 150ms ease, transform 150ms ease;
+      }
+
+      .tbtn:hover:not(:disabled) {
+        border-color: var(--teal);
+        color: var(--teal);
+        transform: translateY(-1px);
+      }
+
+      .tbtn:disabled {
+        opacity: 0.42;
+        cursor: not-allowed;
+      }
+
+      .tbtn.primary {
+        min-width: 96px;
+        border-color: transparent;
+        color: white;
+        background: var(--accent);
+        box-shadow: 0 8px 18px rgba(216, 76, 76, 0.22);
+      }
+
+      .tbtn.primary:hover:not(:disabled) {
+        background: var(--accent-dark);
+        border-color: transparent;
+        color: white;
+      }
+
+      .progress-row {
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        flex-wrap: wrap;
+      }
+
+      .turn-ribbon {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        min-height: 30px;
+        padding: 0 12px;
+        border-radius: 999px;
+        color: var(--accent-dark);
+        background: var(--accent-soft);
+        font-size: 12px;
+        font-weight: 750;
+        white-space: nowrap;
+      }
+
+      .scrubber {
+        flex: 1 1 260px;
+        min-width: 200px;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 4px;
+        padding: 6px 8px;
+        border: 1px solid var(--line);
+        border-radius: 11px;
+        background: var(--paper-strong);
+      }
+
+      .tick {
+        width: 13px;
+        height: 13px;
+        padding: 0;
+        border: 0;
+        border-radius: 50%;
+        background: #dfe1dc;
+        cursor: pointer;
+        transition: background 140ms ease, transform 140ms ease;
+      }
+
+      .tick:hover {
+        transform: scale(1.25);
+      }
+
+      .tick.is-done {
+        background: var(--teal);
+      }
+
+      .tick.is-active {
+        background: var(--accent);
+        box-shadow: 0 0 0 3px var(--accent-soft);
+      }
+
+      .tick.is-error {
+        background: var(--danger);
+      }
+
+      .tick.turn-start {
+        border: 2px solid var(--ink);
+      }
+
+      /* ---------- real-run bar ---------- */
+
+      .realbar {
+        padding: 16px 28px;
+        border-bottom: 1px solid var(--line);
+        display: flex;
+        align-items: flex-end;
+        flex-wrap: wrap;
+        gap: 12px;
+        background: var(--teal-soft);
+      }
+
+      .realbar-field {
+        flex: 1 1 260px;
+        min-width: 0;
+      }
+
+      .realbar input[type="text"],
+      .realbar input[type="number"] {
+        width: 100%;
+        min-height: 38px;
+        padding: 0 11px;
+        border: 1px solid var(--line-strong);
+        border-radius: 11px;
+        background: var(--paper-strong);
+        color: var(--ink);
+      }
+
+      .realbar input[type="number"] {
+        width: 76px;
+        text-align: center;
+      }
+
+      .realbar-note {
+        flex: 1 1 100%;
+        margin: 0;
+        color: var(--teal);
+        font-size: 11px;
+        line-height: 1.6;
+      }
+
+      /* ---------- canvas ---------- */
+
+      .canvas-scroll {
+        overflow-x: auto;
+        overflow-y: hidden;
+        padding: 0;
+        scrollbar-width: thin;
+      }
+
+      .canvas-grid {
+        position: relative;
+        display: grid;
+        grid-template-columns: repeat(12, 152px);
+        grid-template-rows: auto auto 26px auto;
+        /* Top padding has to clear the tallest `over` routing lane plus its
+           label, otherwise the branch labels get clipped by the scroll box. */
+        padding: 96px 34px 30px;
+        gap: 14px 20px;
+        min-width: max-content;
+      }
+
+      .band {
+        position: relative;
+        z-index: 0;
+        grid-column: 1 / -1;
+        margin: -16px -16px;
+        border: 1px solid var(--line);
+        border-radius: var(--radius-lg);
+      }
+
+      .band.agent {
+        grid-row: 1 / 3;
+        border-color: #efc3c0;
+        background: rgba(253, 233, 230, 0.42);
+      }
+
+      .band.mcp {
+        grid-row: 4 / 5;
+        border-color: #b8dcd5;
+        background: rgba(224, 241, 237, 0.5);
+      }
+
+      .band-label {
+        position: absolute;
+        top: -12px;
+        left: 16px;
+        padding: 2px 10px;
+        border-radius: 999px;
+        color: white;
+        font-size: 10px;
+        font-weight: 800;
+        letter-spacing: 0.1em;
+        white-space: nowrap;
+      }
+
+      .band.agent .band-label {
+        background: var(--accent-dark);
+      }
+
+      .band.mcp .band-label {
+        background: var(--teal);
+      }
+
+      .wires {
+        position: absolute;
+        top: 0;
+        left: 0;
+        z-index: 1;
+        overflow: visible;
+        pointer-events: none;
+      }
+
+      .edge {
+        fill: none;
+        stroke: #c2c7c2;
+        stroke-width: 2;
+        stroke-linecap: round;
+        stroke-linejoin: round;
+        marker-end: url(#arrow-idle);
+        transition: stroke 180ms ease, stroke-width 180ms ease, opacity 180ms ease;
+        opacity: 0.55;
+      }
+
+      .edge.policy {
+        stroke-dasharray: 7 6;
+      }
+
+      .edge.is-done {
+        stroke: #93b7b1;
+        opacity: 0.9;
+        marker-end: url(#arrow-done);
+      }
+
+      .edge.is-active {
+        stroke: var(--accent);
+        stroke-width: 3;
+        opacity: 1;
+        marker-end: url(#arrow-active);
+      }
+
+      .edge-label {
+        fill: var(--muted);
+        stroke: var(--paper);
+        stroke-width: 4;
+        paint-order: stroke;
+        font-family: var(--sans);
+        font-size: 11px;
+        font-weight: 700;
+        text-anchor: middle;
+        dominant-baseline: middle;
+        opacity: 0.75;
+        transition: fill 180ms ease, opacity 180ms ease;
+      }
+
+      .edge-label.is-active {
+        fill: var(--accent-dark);
+        opacity: 1;
+      }
+
+      .packet circle {
+        fill: var(--accent);
+        stroke: white;
+        stroke-width: 2.5;
+      }
+
+      .packet text {
+        fill: var(--ink);
+        stroke: var(--paper-strong);
+        stroke-width: 5;
+        paint-order: stroke;
+        font-family: var(--mono);
+        font-size: 10px;
+        font-weight: 700;
+        text-anchor: middle;
+      }
+
+      .node {
+        position: relative;
+        z-index: 2;
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+        min-height: 76px;
+        padding: 10px 11px;
+        border: 1px solid var(--line-strong);
+        border-radius: var(--radius-md);
+        background: var(--paper-strong);
+        opacity: 0.44;
+        filter: saturate(0.35);
+        transition: opacity 200ms ease, filter 200ms ease, box-shadow 200ms ease,
+          border-color 200ms ease, transform 200ms ease;
+      }
+
+      .node .node-num {
+        color: var(--muted);
+        font-family: var(--mono);
+        font-size: 11px;
+        font-weight: 800;
+      }
+
+      .node strong {
+        font-size: 12.5px;
+        line-height: 1.35;
+        letter-spacing: -0.01em;
+      }
+
+      .node .node-sub {
+        margin-top: auto;
+        color: var(--muted);
+        font-size: 10.5px;
+        line-height: 1.45;
+      }
+
+      .node.decision {
+        border-style: dashed;
+        border-color: #cbb08a;
+        background: linear-gradient(180deg, #fffaf0 0%, var(--paper-strong) 100%);
+      }
+
+      .node.decision .node-num::after {
+        content: " 判斷";
+        color: var(--amber);
+        letter-spacing: 0.06em;
+      }
+
+      .node.policy {
+        border-style: dashed;
+        border-color: #9dc7c0;
+      }
+
+      .node.policy .node-num::after {
+        content: " 系統自動";
+        color: var(--teal);
+        letter-spacing: 0.06em;
+      }
+
+      .node.is-done {
+        opacity: 1;
+        filter: none;
+        border-color: #9dc7c0;
+        background: linear-gradient(180deg, #f4fbf9 0%, var(--paper-strong) 100%);
+      }
+
+      .node.is-active {
+        opacity: 1;
+        filter: none;
+        border-color: var(--accent);
+        box-shadow: 0 0 0 4px var(--accent-soft), 0 14px 30px rgba(216, 76, 76, 0.14);
+        transform: translateY(-2px);
+      }
+
+      .node.is-error {
+        opacity: 1;
+        filter: none;
+        border-color: #d78d92;
+        background: var(--danger-soft);
+      }
+
+      .node.is-error.is-active {
+        box-shadow: 0 0 0 4px var(--danger-soft), 0 14px 30px rgba(165, 47, 54, 0.16);
+      }
+
+      .node.is-skip {
+        opacity: 0.72;
+        filter: none;
+        border-style: dotted;
+        border-color: var(--line-strong);
+        background: #f6f5f1;
+      }
+
+      .node-flag {
+        position: absolute;
+        top: -9px;
+        right: 9px;
+        padding: 1px 7px;
+        border-radius: 999px;
+        color: white;
+        background: var(--danger);
+        font-size: 9px;
+        font-weight: 800;
+        letter-spacing: 0.05em;
+      }
+
+      .node.is-skip .node-flag {
+        background: var(--muted);
+      }
+
+      .service-strip {
+        grid-row: 4 / 5;
+        grid-column: 1 / 5;
+        z-index: 2;
+        align-self: center;
+        display: flex;
+        align-items: center;
+        flex-wrap: wrap;
+        gap: 6px;
+      }
+
+      .service-strip .control-label {
+        flex: 1 1 100%;
+        margin: 0 0 1px 2px;
+      }
+
+      .service-pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 5px 9px;
+        border: 1px solid #bee0d9;
+        border-radius: 9px;
+        color: var(--teal);
+        background: rgba(255, 255, 255, 0.7);
+        font-family: var(--mono);
+        font-size: 10px;
+        font-weight: 700;
+        opacity: 0.5;
+        transition: opacity 180ms ease, box-shadow 180ms ease;
+      }
+
+      .service-pill em {
+        font-family: var(--sans);
+        font-style: normal;
+        font-weight: 650;
+        color: var(--muted);
+      }
+
+      .service-pill.is-active {
+        opacity: 1;
+        box-shadow: 0 0 0 3px var(--teal-soft);
+      }
+
+      .service-pill.is-off {
+        border-color: var(--line-strong);
+        color: var(--muted);
+        background: #f2f1ec;
+      }
+
+      /* ---------- substeps ---------- */
+
+      .substeps {
+        padding: 20px 28px 24px;
+        border-top: 1px solid var(--line);
+        background: rgba(247, 246, 241, 0.6);
+      }
+
+      .substeps-head {
+        display: flex;
+        align-items: baseline;
+        flex-wrap: wrap;
+        gap: 10px;
+        margin-bottom: 12px;
+      }
+
+      .substeps-head strong {
+        font-size: 14px;
+      }
+
+      .substeps-head .tag {
+        padding: 2px 8px;
+        border-radius: 999px;
+        color: var(--teal);
+        background: var(--teal-soft);
+        font-family: var(--mono);
+        font-size: 10px;
+        font-weight: 700;
+      }
+
+      .substep-list {
+        margin: 0;
+        padding: 0;
+        list-style: none;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+      }
+
+      .substep {
+        /* Narrow enough that the longest script (8 steps) stays on one row, so
+           the verdict chips underneath do not fall below the fold. */
+        flex: 1 1 124px;
+        min-width: 112px;
+        max-width: 230px;
+        padding: 8px 10px;
+        border: 1px solid var(--line);
+        border-radius: 11px;
+        background: var(--paper-strong);
+        opacity: 0.45;
+        transition: opacity 180ms ease, border-color 180ms ease, box-shadow 180ms ease;
+      }
+
+      .substep b {
+        display: block;
+        margin-bottom: 3px;
+        font-size: 11px;
+        line-height: 1.35;
+      }
+
+      .substep b span {
+        color: var(--muted);
+        font-family: var(--mono);
+        font-weight: 800;
+      }
+
+      .substep i {
+        display: block;
+        color: var(--muted);
+        font-size: 10px;
+        font-style: normal;
+        line-height: 1.5;
+      }
+
+      .substep.is-done {
+        opacity: 1;
+        border-color: #bee0d9;
+      }
+
+      .substep.is-active {
+        opacity: 1;
+        border-color: var(--accent);
+        box-shadow: 0 0 0 3px var(--accent-soft);
+      }
+
+      .substep.is-error {
+        opacity: 1;
+        border-color: #d78d92;
+        background: var(--danger-soft);
+      }
+
+      .verdicts {
+        margin-top: 13px;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 7px;
+      }
+
+      .verdict {
+        display: inline-flex;
+        align-items: center;
+        gap: 7px;
+        padding: 6px 10px;
+        border: 1px solid var(--line);
+        border-radius: 999px;
+        background: var(--paper-strong);
+        font-size: 11px;
+      }
+
+      .verdict b {
+        font-weight: 750;
+      }
+
+      .verdict .mark {
+        width: 9px;
+        height: 9px;
+        border-radius: 50%;
+      }
+
+      .verdict.hit {
+        border-color: #bee0d9;
+        background: var(--teal-soft);
+        color: var(--teal);
+      }
+
+      .verdict.hit .mark {
+        background: var(--teal);
+      }
+
+      .verdict.wrong {
+        border-color: #e6ce9b;
+        background: var(--amber-soft);
+        color: var(--amber);
+      }
+
+      .verdict.wrong .mark {
+        background: var(--amber);
+      }
+
+      .verdict.miss {
+        border-color: #efb9bc;
+        background: var(--danger-soft);
+        color: var(--danger);
+      }
+
+      .verdict.miss .mark {
+        background: var(--danger);
+      }
+
+      /* ---------- side panel ---------- */
+
+      .panel {
+        position: sticky;
+        top: 18px;
+        max-height: calc(100vh - 36px);
+        overflow: auto;
+      }
+
+      .panel-section {
+        padding: 20px 22px;
+        border-bottom: 1px solid var(--line);
+      }
+
+      .panel-section:last-child {
+        border-bottom: 0;
+      }
+
+      .section-label {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+        margin: 0 0 11px;
+        color: var(--muted);
+        font-size: 10px;
+        font-weight: 800;
+        letter-spacing: 0.11em;
+        text-transform: uppercase;
+      }
+
+      .step-title {
+        margin: 0 0 4px;
+        font-size: 17px;
+        line-height: 1.3;
+        letter-spacing: -0.02em;
+      }
+
+      .step-lane {
+        display: inline-flex;
+        align-items: center;
+        margin-bottom: 10px;
+        padding: 2px 9px;
+        border-radius: 999px;
+        font-size: 10px;
+        font-weight: 800;
+        letter-spacing: 0.08em;
+      }
+
+      .step-lane.agent {
+        color: var(--accent-dark);
+        background: var(--accent-soft);
+      }
+
+      .step-lane.tools {
+        color: var(--teal);
+        background: var(--teal-soft);
+      }
+
+      .step-plain {
+        margin: 0;
+        color: var(--ink-soft);
+        font-size: 13px;
+        line-height: 1.75;
+      }
+
+      .kv {
+        margin: 13px 0 0;
+        display: grid;
+        gap: 7px;
+      }
+
+      .kv div {
+        padding: 9px 11px;
+        border: 1px solid var(--line);
+        border-radius: 11px;
+        background: var(--paper-strong);
+      }
+
+      .kv dt {
+        margin: 0 0 3px;
+        color: var(--muted);
+        font-size: 10px;
+        font-weight: 800;
+        letter-spacing: 0.06em;
+      }
+
+      .kv dd {
+        margin: 0;
+        font-size: 12px;
+        line-height: 1.6;
+        overflow-wrap: anywhere;
+      }
+
+      .tech-note {
+        margin: 13px 0 0;
+        padding: 10px 11px;
+        border: 1px dashed var(--line-strong);
+        border-radius: 11px;
+        color: var(--muted);
+        font-family: var(--mono);
+        font-size: 10.5px;
+        line-height: 1.7;
+        overflow-wrap: anywhere;
+      }
+
+      .tech-note b {
+        display: block;
+        margin-bottom: 4px;
+        color: var(--ink-soft);
+      }
+
+      .metrics {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 8px;
+      }
+
+      .metric {
+        min-height: 70px;
+        padding: 11px;
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        background: var(--paper-strong);
+      }
+
+      .metric span {
+        display: block;
+        margin-bottom: 7px;
+        color: var(--muted);
+        font-size: 9px;
+        font-weight: 800;
+        letter-spacing: 0.08em;
+      }
+
+      .metric strong {
+        display: block;
+        overflow: hidden;
+        font-family: var(--mono);
+        font-size: 16px;
+        font-weight: 750;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      details.raw {
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        background: var(--paper-strong);
+      }
+
+      details.raw summary {
+        padding: 11px 12px;
+        cursor: pointer;
+        color: var(--ink-soft);
+        font-size: 11px;
+        font-weight: 700;
+      }
+
+      .raw pre {
+        max-height: 300px;
+        margin: 0;
+        padding: 0 12px 12px;
+        overflow: auto;
+        color: var(--ink-soft);
+        font-family: var(--mono);
+        font-size: 9px;
+        line-height: 1.6;
+        white-space: pre-wrap;
+        overflow-wrap: anywhere;
+      }
+
+      /* ---------- comparison ---------- */
+
+      .compare {
+        width: min(1520px, calc(100% - 40px));
+        margin: 18px auto 40px;
+        padding: 24px 28px 26px;
+      }
+
+      .compare h2 {
+        margin: 0 0 5px;
+        font-size: 18px;
+        letter-spacing: -0.02em;
+      }
+
+      .compare > p {
+        margin: 0 0 16px;
+        color: var(--ink-soft);
+        font-size: 13px;
+        line-height: 1.7;
+      }
+
+      .table-scroll {
+        overflow-x: auto;
+      }
+
+      table {
+        width: 100%;
+        min-width: 720px;
+        border-collapse: collapse;
+        font-size: 12.5px;
+      }
+
+      th,
+      td {
+        padding: 11px 12px;
+        border-bottom: 1px solid var(--line);
+        text-align: left;
+        vertical-align: top;
+        line-height: 1.6;
+      }
+
+      th {
+        color: var(--muted);
+        font-size: 10px;
+        font-weight: 800;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        white-space: nowrap;
+      }
+
+      tbody tr {
+        cursor: pointer;
+        transition: background 140ms ease;
+      }
+
+      tbody tr:hover {
+        background: rgba(224, 241, 237, 0.4);
+      }
+
+      tbody tr.is-current {
+        background: var(--accent-soft);
+      }
+
+      td.num {
+        font-family: var(--mono);
+        font-weight: 700;
+        text-align: center;
+      }
+
+      .footnote {
+        margin: 18px 0 0;
+        padding-top: 15px;
+        border-top: 1px solid var(--line);
+        color: var(--muted);
+        font-size: 11.5px;
+        line-height: 1.8;
+      }
+
+      .footnote b {
+        color: var(--ink-soft);
+      }
+
+      body:not([data-tech="on"]) .tech-only {
+        display: none !important;
+      }
+
+      @media (max-width: 1100px) {
+        .shell {
+          grid-template-columns: 1fr;
+        }
+
+        .panel {
+          position: static;
+          max-height: none;
+        }
+      }
+
+      @media (max-width: 680px) {
+        .topbar,
+        .shell,
+        .compare {
+          width: min(100% - 22px, 1520px);
+        }
+
+        .brand-copy span,
+        .docs-link {
+          display: none;
+        }
+
+        .intro,
+        .controls,
+        .realbar,
+        .substeps {
+          padding-left: 18px;
+          padding-right: 18px;
+        }
+      }
+    </style>
+  </head>
+  <body data-tech="off">
+    <header class="topbar">
+      <div class="brand">
+        <div class="brand-mark" aria-hidden="true">A/</div>
+        <div class="brand-copy">
+          <strong>MCP Agent 流程動畫</strong>
+          <span>看見 Agent 在中間做了什麼</span>
+        </div>
+      </div>
+      <div class="topbar-actions">
+        <a class="docs-link" href="/">← 回測試台</a>
+        <div id="serverStatus" class="server-status" role="status" aria-live="polite">
+          <span class="status-dot" aria-hidden="true"></span>
+          <span id="serverStatusText">正在連線</span>
+        </div>
+      </div>
+    </header>
+
+    <main class="shell">
+      <section class="stage">
+        <div class="intro">
+          <div class="eyebrow">流程拆解</div>
+          <h1>Agent 收到問題之後，中間到底做了哪些判斷？</h1>
+          <!-- Only ever break these lines after CJK punctuation: a newline
+               between two Han characters renders as a visible space. -->
+          <p>
+            上排是 <b>Agent 的判斷與決策</b>，下排是 <b>獨立運作的工具服務</b>。
+            切換情境可以看到同一套流程面對不同問題時走的路徑完全不同 —— 包括它決定<b>不用</b>任何工具，
+            以及工具壞掉時會怎麼處理。太快就切「慢速」，或勾「逐步模式」一步一步走。
+          </p>
+        </div>
+
+        <div class="controls">
+          <div class="control-row">
+            <div class="control-group">
+              <span class="control-label" id="scenarioLabel">情境</span>
+              <div class="segmented" role="radiogroup" aria-labelledby="scenarioLabel" id="scenarioPicker"></div>
+            </div>
+            <div class="control-group">
+              <span class="control-label" id="sourceLabel">資料來源</span>
+              <div class="segmented" role="radiogroup" aria-labelledby="sourceLabel">
+                <label>
+                  <input type="radio" name="source" value="demo" checked />
+                  <span>示範情境</span>
+                </label>
+                <label>
+                  <input type="radio" name="source" value="live" />
+                  <span>真實執行</span>
+                </label>
+              </div>
+            </div>
+            <div class="control-group">
+              <span class="control-label" id="speedLabel">速度</span>
+              <div class="segmented" role="radiogroup" aria-labelledby="speedLabel">
+                <label>
+                  <input type="radio" name="speed" value="1" checked />
+                  <span>正常</span>
+                </label>
+                <label>
+                  <input type="radio" name="speed" value="0.75" />
+                  <span>慢速 0.75×</span>
+                </label>
+              </div>
+            </div>
+            <div class="control-group">
+              <span class="control-label">播放</span>
+              <div class="transport">
+                <button id="btnPlay" class="tbtn primary" type="button">▶ 播放</button>
+                <button id="btnPrev" class="tbtn" type="button" title="上一步（←）" aria-label="上一步">←</button>
+                <button id="btnNext" class="tbtn" type="button" title="下一步（→）" aria-label="下一步">→</button>
+                <button id="btnReplay" class="tbtn" type="button" title="重播（R）" aria-label="重播">↻</button>
+              </div>
+            </div>
+            <div class="control-group">
+              <span class="control-label">選項</span>
+              <div class="transport">
+                <label class="toggle"><input id="stepMode" type="checkbox" />逐步模式</label>
+                <label class="toggle"><input id="techMode" type="checkbox" />工程視角</label>
+              </div>
+            </div>
+          </div>
+
+          <div class="progress-row">
+            <span class="turn-ribbon" id="turnRibbon">尚未開始</span>
+            <div class="scrubber" id="scrubber" role="group" aria-label="步驟軸"></div>
+          </div>
+        </div>
+
+        <form id="realForm" class="realbar hidden">
+          <div class="realbar-field">
+            <label class="control-label" for="realText">要問 Agent 什麼？</label>
+            <input id="realText" type="text" maxlength="12000" value="請幫我翻譯：客戶申請提高臨時額度" />
+          </div>
+          <div class="control-group">
+            <span class="control-label" id="realProfileLabel">Profile</span>
+            <div class="segmented" role="radiogroup" aria-labelledby="realProfileLabel">
+              <label>
+                <input type="radio" name="profile" value="generic" />
+                <span>一般</span>
+              </label>
+              <label>
+                <input type="radio" name="profile" value="translation" checked />
+                <span>翻譯</span>
+              </label>
+            </div>
+          </div>
+          <div class="control-group">
+            <span class="control-label" id="realGatewayLabel">模型</span>
+            <div class="segmented" role="radiogroup" aria-labelledby="realGatewayLabel">
+              <label>
+                <input type="radio" name="gateway" value="fake" checked />
+                <span>離線模擬</span>
+              </label>
+              <label id="httpGatewayLabel">
+                <input id="httpGateway" type="radio" name="gateway" value="http" />
+                <span>真實模型</span>
+              </label>
+            </div>
+          </div>
+          <div class="control-group">
+            <label class="control-label" for="realTurns">回合上限</label>
+            <input id="realTurns" type="number" min="1" max="20" value="6" />
+          </div>
+          <div class="control-group">
+            <span class="control-label">&nbsp;</span>
+            <button id="btnRun" class="tbtn primary" type="submit">執行並播放</button>
+          </div>
+          <p class="realbar-note" id="realNote">
+            「離線模擬」不需要任何模型憑證，可直接驗證整條 Agent → 工具的線路。
+          </p>
+        </form>
+
+        <div class="canvas-scroll" id="canvasScroll">
+          <div class="canvas-grid" id="canvas">
+            <div class="band agent"><span class="band-label">AGENT · 判斷與決策</span></div>
+            <div class="band mcp"><span class="band-label">MCP · 獨立運作的工具服務</span></div>
+            <svg class="wires" id="wires" aria-hidden="true">
+              <defs>
+                <marker id="arrow-idle" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+                  <path d="M 0 1 L 10 5 L 0 9 z" fill="#c2c7c2" />
+                </marker>
+                <marker id="arrow-done" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+                  <path d="M 0 1 L 10 5 L 0 9 z" fill="#93b7b1" />
+                </marker>
+                <marker id="arrow-active" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+                  <path d="M 0 1 L 10 5 L 0 9 z" fill="#d84c4c" />
+                </marker>
+              </defs>
+              <g id="edgeLayer"></g>
+              <g id="labelLayer"></g>
+              <g class="packet" id="packet" opacity="0">
+                <circle r="7" cx="0" cy="0" />
+                <text id="packetText" x="0" y="-14"></text>
+              </g>
+            </svg>
+          </div>
+        </div>
+
+        <div class="substeps">
+          <div class="substeps-head">
+            <strong id="subTitle">工具內部流程</strong>
+            <span class="tag" id="subTag">尚未進入工具</span>
+          </div>
+          <ol class="substep-list" id="subList"></ol>
+          <div class="verdicts hidden" id="verdicts"></div>
+        </div>
+      </section>
+
+      <aside class="panel" aria-label="步驟詳情">
+        <section class="panel-section">
+          <h2 class="section-label">現在這一步</h2>
+          <span class="step-lane agent" id="stepLane">AGENT</span>
+          <h3 class="step-title" id="stepTitle">尚未開始</h3>
+          <p class="step-plain" id="stepPlain">
+            按「播放」開始，或勾選「逐步模式」後用 → 一步一步走。
+          </p>
+          <dl class="kv" id="stepData"></dl>
+          <div class="tech-note tech-only hidden" id="stepTech"></div>
+        </section>
+
+        <section class="panel-section">
+          <h2 class="section-label">這次執行</h2>
+          <div class="metrics">
+            <div class="metric"><span>回合</span><strong id="mTurns">—</strong></div>
+            <div class="metric"><span>用了工具</span><strong id="mTools">—</strong></div>
+            <div class="metric"><span>結果</span><strong id="mStop">—</strong></div>
+            <div class="metric"><span>名詞正確率</span><strong id="mHit">—</strong></div>
+          </div>
+        </section>
+
+        <section class="panel-section tech-only">
+          <h2 class="section-label">原始 RunResult</h2>
+          <details class="raw">
+            <summary>查看完整 JSON</summary>
+            <pre id="rawOutput">尚無資料</pre>
+          </details>
+        </section>
+      </aside>
+    </main>
+
+    <section class="compare">
+      <h2>同一套流程，面對不同問題走不同的路</h2>
+      <p>點任一列可以直接播放那個情境。</p>
+      <div class="table-scroll">
+        <table>
+          <thead>
+            <tr>
+              <th>使用者問了什麼</th>
+              <th>Agent 的判斷</th>
+              <th>用了幾個工具</th>
+              <th>幾個回合</th>
+              <th>這個情境要傳達的事</th>
+            </tr>
+          </thead>
+          <tbody id="compareBody"></tbody>
+        </table>
+      </div>
+      <p class="footnote">
+        <b>關於這個頁面的誠實說明：</b>節點的內容與工具內部的每一步，都是照系統真實的處理方式寫的；
+        畫面上的回合數、工具名稱、參數與名詞正確率，在「真實執行」模式下全部來自後端真正跑完的結果。
+        唯一不是量測值的是<b>每一步之間的播放時間</b> —— 真實執行常在十幾毫秒內結束，
+        必須放慢才看得見，所以步與步之間的節奏是為了觀看而設定的。
+      </p>
+    </section>
+
+    <script>
+      (() => {
+        "use strict";
+
+        const REDUCED = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+        /* ==================================================================
+         * 1. The graph: nodes, edges, and the tool sub-step scripts.
+         *    Node copy is deliberately jargon-free; `tech` strings are the
+         *    engineer view and stay hidden unless 工程視角 is on.
+         * ================================================================== */
+
+        const NODES = {
+          A1: { n: "①", t: "收到問題", sub: "使用者問了什麼", lane: "agent", row: 1, col: 1 },
+          A2: { n: "②", t: "理解問題", sub: "帶上回答規則與可用工具清單", lane: "agent", row: 1, col: 2 },
+          A3: { n: "③", t: "需要用工具嗎？", sub: "這是一個真的判斷，不是固定動作", lane: "agent", row: 1, col: 3, kind: "decision" },
+          A4: { n: "④", t: "挑選要用哪個工具", sub: "以及要傳什麼參數", lane: "agent", row: 1, col: 4 },
+          M1: { n: "⑪", t: "交給對應的工具服務", sub: "工具是獨立的程式，各自隔離", lane: "tools", row: 4, col: 5 },
+          M2: { n: "⑫", t: "工具執行", sub: "下方會展開它做了什麼", lane: "tools", row: 4, col: 6 },
+          M3: { n: "⑬", t: "回傳結果", sub: "壞掉時回傳的是錯誤訊息", lane: "tools", row: 4, col: 7 },
+          A5: { n: "⑤", t: "讀取工具回傳的結果", sub: "把資料放回對話裡", lane: "agent", row: 1, col: 8 },
+          A6: { n: "⑥", t: "資料夠了嗎？", sub: "不夠可以再查，但有回合上限", lane: "agent", row: 1, col: 9, kind: "decision" },
+          A7: { n: "⑦", t: "品質自我檢查", sub: "Agent 自己回頭確認，不是使用者要求的", lane: "agent", row: 1, col: 10 },
+          M4: { n: "⑭", t: "檢查工具執行", sub: "由系統發起，不算使用者要求的工具", lane: "tools", row: 4, col: 10, kind: "policy" },
+          A8: { n: "⑧", t: "專有名詞都用對了嗎？", sub: "沒全對就修，但有次數上限", lane: "agent", row: 1, col: 11, kind: "decision" },
+          A9: { n: "⑨", t: "補上漏掉的名詞，重做一次", sub: "最多 2 次，不會無限迴圈", lane: "agent", row: 2, col: 11 },
+          A10: { n: "⑩", t: "產出最終回答", sub: "回覆使用者", lane: "agent", row: 1, col: 12 },
+        };
+
+        const EDGES = [
+          { id: "A1>A2", from: "A1", to: "A2", shape: "h" },
+          { id: "A2>A3", from: "A2", to: "A3", shape: "h" },
+          { id: "A3>A4", from: "A3", to: "A4", shape: "h", label: "需要" },
+          { id: "A3>A10", from: "A3", to: "A10", shape: "over", lift: 26, label: "不需要，直接回答" },
+          { id: "A3>A7", from: "A3", to: "A7", shape: "over", lift: 48, label: "不用再查了" },
+          { id: "A4>M1", from: "A4", to: "M1", shape: "down", label: "要查什麼" },
+          { id: "M1>M2", from: "M1", to: "M2", shape: "h" },
+          { id: "M2>M3", from: "M2", to: "M3", shape: "h" },
+          { id: "M3>A5", from: "M3", to: "A5", shape: "up", label: "查到的資料" },
+          { id: "A5>A6", from: "A5", to: "A6", shape: "h" },
+          { id: "A6>A3", from: "A6", to: "A3", shape: "back", lift: 30, label: "還需要再查" },
+          { id: "A6>A7", from: "A6", to: "A7", shape: "h", label: "夠了" },
+          { id: "A7>M4", from: "A7", to: "M4", shape: "down", policy: true, label: "請工具再確認" },
+          { id: "M4>A8", from: "M4", to: "A8", shape: "up", policy: true, label: "檢查報告" },
+          { id: "A7>A8", from: "A7", to: "A8", shape: "h", label: "不需檢查" },
+          { id: "A8>A10", from: "A8", to: "A10", shape: "h", label: "是" },
+          { id: "A8>A9", from: "A8", to: "A9", shape: "down", label: "否" },
+          { id: "A9>A7", from: "A9", to: "A7", shape: "back", lift: 30, label: "重做一次" },
+        ];
+
+        const SERVICES = [
+          { key: "translation", name: "translation", desc: "翻譯相關工具", tools: ["lookup_terms", "verify_translation"] },
+          { key: "utilities", name: "utilities", desc: "一般小工具", tools: ["get_time", "get_weather", "say_hello"] },
+          { key: "rag-upload", name: "rag-upload", desc: "預設關閉", tools: ["upload_document"], off: true },
+        ];
+
+        const TOOLS = {
+          lookup_terms: {
+            label: "查術語對照表",
+            service: "translation",
+            steps: [
+              { n: "①", t: "收到內容", d: "整句中文原文", tech: "tools/translate_lookup.py:33 讀 text 參數" },
+              { n: "②", t: "取得最新的術語對照表", d: "檔案更新會自動生效，不需重啟服務", tech: "glossary/loader.py:440 每次 get() 都 stat CSV 取 (mtime_ns, size)；同 stamp 用快取" },
+              { n: "③", t: "找關鍵字", d: "掃過整句話，圈出裡面的專有名詞", tech: "glossary/scanner.py:36 單次 finditer 由左至右" },
+              { n: "④", t: "處理重疊的詞", d: "優先採用最長的那一個：「臨時額度」蓋過「額度」", tech: "glossary/loader.py:351 surface 依 (-len, surface) 排序；這個排序本身就是演算法" },
+              { n: "⑤", t: "查表", d: "逐一取出每個名詞的正確英文", tech: "surface_to_entry → GlossaryEntry.en" },
+              { n: "⑥", t: "檢查對照表有沒有矛盾定義", d: "有就明確回報問題，絕不亂猜", tech: "quarantined surface → GlossaryConflictError → ToolError（可恢復錯誤）" },
+              { n: "⑦", t: "整合", d: "組成「中文 → 正確英文」對照清單", tech: "capabilities/translation/prompts.py:16 format_glossary_block，去重、首次出現序" },
+              { n: "⑧", t: "輸出結果", d: "交回 Agent", tech: "LookupResult.model_dump(mode=\"json\")" },
+            ],
+          },
+          verify_translation: {
+            label: "檢查譯文有沒有用對術語",
+            service: "translation",
+            steps: [
+              { n: "①", t: "收到內容", d: "原文 + 譯好的英文", tech: "tools/translate_verify.py:32" },
+              { n: "②", t: "找關鍵字", d: "找出原文裡有哪些專有名詞", tech: "glossary/scanner.py scan(source)" },
+              { n: "③", t: "查表", d: "取出每個名詞應該用的英文", tech: "_as_entries()，依正規 zh 去重" },
+              { n: "④", t: "逐一比對", d: "在譯文裡搜尋這些英文", tech: "glossary/matcher.py:76 雙邊 normalize_en，折平大小寫／連字號／空白" },
+              { n: "⑤", t: "判定每個名詞的結果", d: "用對了／用了相近但錯的詞／完全沒出現", tech: "glossary/matcher.py:45 swallowed span 判定：只出現在更長鄰詞裡不算命中", verdicts: true },
+              { n: "⑥", t: "整合", d: "統計正確率，列出漏掉哪些", tech: "hit_rate = HIT 數 / 術語數；missed 收 WRONG 與 MISS" },
+              { n: "⑦", t: "輸出檢查報告", d: "交回 Agent", tech: "VerifyResult；只回報，不做決策" },
+            ],
+          },
+          get_time: {
+            label: "查時間",
+            service: "utilities",
+            steps: [
+              { n: "①", t: "讀取時區", d: "沒指定就用台北", tech: "tools/get_time.py DEFAULT_TIMEZONE = Asia/Taipei" },
+              { n: "②", t: "取得當下時間", d: "認不出時區就明確報錯", tech: "ZoneInfo(name) → ZoneInfoNotFoundError → ToolError" },
+              { n: "③", t: "回傳日期、時間、星期", d: "含 UTC 位移", tech: "iso / date / time / timezone / weekday / utc_offset" },
+            ],
+          },
+          get_weather: {
+            label: "查天氣",
+            service: "utilities",
+            steps: [
+              { n: "①", t: "讀取城市", d: "沒有城市就回頭問使用者", tech: "tools/get_weather.py 需要 city" },
+              { n: "②", t: "選擇資料來源", d: "預設用內建範例資料，完全不對外連網", tech: "WEATHER_PROVIDER=stub（預設）｜open-meteo（需明確開啟）" },
+              { n: "③", t: "回傳溫度與天氣狀況", d: "並標明資料來源", tech: "temperature_c / condition / source" },
+            ],
+          },
+          say_hello: {
+            label: "產生招呼語",
+            service: "utilities",
+            steps: [
+              { n: "①", t: "讀取姓名與語言", d: "姓名空白就明確報錯", tech: "tools/say_hello.py language ∈ {zh, en}" },
+              { n: "②", t: "套用招呼語模板", d: "回傳組好的句子", tech: "GREETINGS[language].format(name=name)" },
+            ],
+          },
+          upload_document: {
+            label: "上傳文件到知識庫",
+            service: "rag-upload",
+            steps: [
+              { n: "①", t: "檢查檔案位置是否被允許", d: "只接受允許清單內的目錄", tech: "mcp_servers/rag_upload/files.py allowlisted staging roots" },
+              { n: "②", t: "上傳到知識庫系統", d: "會寫入外部系統，預設關閉", tech: "POST RAG_UPLOAD_BASE_URL/datacenter/v1/file（multipart）" },
+              { n: "③", t: "回報是否受理", d: "只承諾收到，不承諾已建好索引", tech: "驗證 receipt 或轉成安全的 tool error" },
+            ],
+          },
+        };
+
+        function toolInfo(name) {
+          const bare = String(name || "").includes("__")
+            ? String(name).split("__").slice(1).join("__")
+            : String(name || "");
+          const known = TOOLS[bare];
+          if (known) return { key: bare, ...known };
+          const prefix = String(name || "").includes("__") ? String(name).split("__")[0] : "未知服務";
+          return {
+            key: bare || "unknown",
+            label: bare || "未知工具",
+            service: prefix,
+            steps: [
+              { n: "①", t: "收到參數", d: "由 Agent 決定要傳什麼" },
+              { n: "②", t: "執行", d: "這個工具沒有內建的流程說明" },
+              { n: "③", t: "回傳結果", d: "交回 Agent" },
+            ],
+          };
+        }
+
+        /* ==================================================================
+         * 2. Demo scenarios. Each is shaped exactly like an AgentRunResponse
+         *    so it goes through the same buildSteps() as a real run — the
+         *    demo is canned data, not a second engine.
+         * ================================================================== */
+
+        const SCENARIOS = [
+          {
+            key: "translation",
+            tab: "術語翻譯",
+            ask: "請幫我翻譯：客戶申請提高臨時額度",
+            judgement: "需要查術語",
+            toolsText: "2（查對照表＋檢查譯文）",
+            turnsText: "3",
+            takeaway: "翻完會自己檢查，發現漏詞自動重譯，且有次數上限不會無限迴圈",
+            profile: "translation",
+            envelope: {
+              run_id: "demo-translation",
+              created_at: "2026-07-28T09:12:04Z",
+              duration_ms: 2418,
+              result: {
+                output:
+                  "The customer applied to raise the temporary credit limit, and the case has been forwarded for review.",
+                metrics: {
+                  turns: 3,
+                  tool_calls: 1,
+                  tool_names: ["lookup_terms"],
+                  called_any_tool: true,
+                  retranslations: 1,
+                  stop_reason: "completed",
+                },
+                tool_calls: [
+                  { name: "lookup_terms", arguments: { text: "客戶申請提高臨時額度" }, ok: true, error: null, turn: 1, initiator: "model" },
+                  { name: "verify_translation", arguments: { source: "客戶申請提高臨時額度", translation: "The customer applied to raise the credit limit." }, ok: true, error: null, turn: 2, initiator: "policy" },
+                  { name: "verify_translation", arguments: { source: "客戶申請提高臨時額度", translation: "The customer applied to raise the temporary credit limit." }, ok: true, error: null, turn: 3, initiator: "policy" },
+                ],
+                verify: {
+                  results: [{ zh: "臨時額度", expected_en: "temporary credit limit", verdict: "HIT", found: "temporary credit limit" }],
+                  hit_rate: 1,
+                  missed: [],
+                },
+                artifacts: {},
+                policy_metrics: { "translation.retranslations": 1 },
+              },
+            },
+            /* Demo-only: the response contract carries the *final* verify, so
+               the intermediate pass is authored here to show the repair. */
+            verifyPasses: [
+              {
+                results: [{ zh: "臨時額度", expected_en: "temporary credit limit", verdict: "WRONG", found: "credit limit" }],
+                hit_rate: 0,
+                missed: ["臨時額度"],
+              },
+              {
+                results: [{ zh: "臨時額度", expected_en: "temporary credit limit", verdict: "HIT", found: "temporary credit limit" }],
+                hit_rate: 1,
+                missed: [],
+              },
+            ],
+            terms: ["臨時額度"],
+          },
+          {
+            key: "time",
+            tab: "查時間",
+            ask: "現在台北幾點？",
+            judgement: "需要查時間",
+            toolsText: "1",
+            turnsText: "2",
+            takeaway: "從多個工具中選對那一個，不多做也不少做",
+            profile: "generic",
+            envelope: {
+              run_id: "demo-time",
+              created_at: "2026-07-28T09:14:22Z",
+              duration_ms: 612,
+              result: {
+                output: "現在台北時間是 2026-07-28 17:14:22（星期二）。",
+                metrics: {
+                  turns: 2,
+                  tool_calls: 1,
+                  tool_names: ["get_time"],
+                  called_any_tool: true,
+                  retranslations: 0,
+                  stop_reason: "completed",
+                },
+                tool_calls: [
+                  { name: "get_time", arguments: { timezone: "Asia/Taipei" }, ok: true, error: null, turn: 1, initiator: "model" },
+                ],
+                verify: null,
+                artifacts: {},
+                policy_metrics: {},
+              },
+            },
+          },
+          {
+            key: "chat",
+            tab: "一般問答",
+            ask: "什麼是信用卡？",
+            judgement: "不需要工具",
+            toolsText: "0",
+            turnsText: "1",
+            takeaway: "不會為了用工具而用工具；MCP 整排是暗的",
+            profile: "generic",
+            envelope: {
+              run_id: "demo-chat",
+              created_at: "2026-07-28T09:15:40Z",
+              duration_ms: 388,
+              result: {
+                output:
+                  "信用卡是由發卡機構提供的一種支付工具，持卡人可以先消費、後付款，並在帳單週期結束前繳款。",
+                metrics: {
+                  turns: 1,
+                  tool_calls: 0,
+                  tool_names: [],
+                  called_any_tool: false,
+                  retranslations: 0,
+                  stop_reason: "completed",
+                },
+                tool_calls: [],
+                verify: null,
+                artifacts: {},
+                policy_metrics: {},
+              },
+            },
+          },
+          {
+            key: "failure",
+            tab: "工具故障",
+            ask: "幫我查一下台北的天氣",
+            judgement: "需要查天氣",
+            toolsText: "1（失敗）",
+            turnsText: "2",
+            takeaway: "工具壞掉不會讓整個服務掛掉，Agent 讀到錯誤後自己改口回答",
+            profile: "generic",
+            envelope: {
+              run_id: "demo-failure",
+              created_at: "2026-07-28T09:17:03Z",
+              duration_ms: 1044,
+              result: {
+                output:
+                  "抱歉，天氣查詢服務目前無法連線，我還沒辦法給你台北的即時天氣。稍後再試一次，或改由其他管道確認。",
+                metrics: {
+                  turns: 2,
+                  tool_calls: 1,
+                  tool_names: ["get_weather"],
+                  called_any_tool: true,
+                  retranslations: 0,
+                  stop_reason: "completed",
+                },
+                tool_calls: [
+                  {
+                    name: "get_weather",
+                    arguments: { city: "台北" },
+                    ok: false,
+                    error: "weather provider unavailable: connection timed out",
+                    turn: 1,
+                    initiator: "model",
+                  },
+                ],
+                verify: null,
+                artifacts: {},
+                policy_metrics: {},
+              },
+            },
+          },
+        ];
+
+        /* ==================================================================
+         * 3. buildSteps(): AgentRunResponse -> playback steps.
+         *    The single translation used by BOTH demo and live runs.
+         * ================================================================== */
+
+        function verdictLabel(verdict) {
+          const v = String(verdict || "").toUpperCase();
+          if (v === "HIT") return "用對了";
+          if (v === "WRONG") return "用了相近但錯的詞";
+          return "完全沒出現";
+        }
+
+        function looksLikeParseError(call) {
+          if (call.ok) return false;
+          const empty = !call.arguments || Object.keys(call.arguments).length === 0;
+          return empty && /json|parse|decode|argument/i.test(String(call.error || ""));
+        }
+
+        function buildSteps(envelope, meta) {
+          const result = (envelope && envelope.result) || {};
+          const metrics = result.metrics || {};
+          const calls = Array.isArray(result.tool_calls) ? result.tool_calls : [];
+          const modelCalls = calls.filter((c) => (c.initiator || "model") === "model");
+          const policyCalls = calls.filter((c) => c.initiator === "policy");
+          const retranslations = Number(metrics.retranslations || 0);
+          const declaredTurns = Number(metrics.turns || 0);
+          const fromRecords = modelCalls.length
+            ? Math.max.apply(null, modelCalls.map((c) => Number(c.turn) || 1))
+            : 1;
+          const coreTurns = Math.max(1, declaredTurns ? declaredTurns - retranslations : fromRecords);
+          const verifyPasses = (meta.verifyPasses && meta.verifyPasses.length
+            ? meta.verifyPasses
+            : result.verify
+              ? [result.verify]
+              : []);
+
+          const steps = [];
+          let seq = 0;
+          let block = 0;
+          const push = (step) => {
+            steps.push(Object.assign({ id: "s" + seq++, status: "ok", ms: 850, turn: 1 }, step));
+          };
+
+          push({
+            node: "A1",
+            edge: null,
+            turn: 1,
+            title: "收到問題",
+            plain: "使用者送進來一個問題。這一次執行不帶任何先前的對話紀錄，每次都是獨立的。",
+            data: [["使用者問的", meta.ask || "（未提供）"]],
+            tech: "agent/loop.py:47 run(user_text)；contracts/api.py:28-33 刻意不帶對話歷史",
+          });
+
+          push({
+            node: "A2",
+            edge: "A1>A2",
+            turn: 1,
+            title: "理解問題",
+            plain:
+              "Agent 把回答規則與「目前有哪些工具可用」一起交給模型。工具清單不是寫死在規則裡的，所以加新工具不用改規則。",
+            data: [
+              ["可用工具數", meta.toolCount == null ? "（未知）" : String(meta.toolCount) + " 個"],
+              ["套用的規則", meta.profile === "translation" ? "一般規則 + 翻譯規則" : "一般規則"],
+            ],
+            tech: "agent/loop.py:48-52 messages=[system, user]，tools 由 MCPToolPool 聚合後放進 API 的 tools 欄位",
+            packet: meta.ask,
+          });
+
+          let exhausted = true;
+          for (let turn = 1; turn <= coreTurns; turn += 1) {
+            const turnCalls = modelCalls.filter((c) => (Number(c.turn) || 1) === turn);
+            const first = turn === 1;
+
+            push({
+              node: "A3",
+              edge: turn === 1 ? "A2>A3" : "A6>A3",
+              turn,
+              title: "需要用工具嗎？",
+              plain: turnCalls.length
+                ? first
+                  ? "模型判斷這個問題需要外部資料，所以決定呼叫工具。這是一個真的判斷 —— 它也可以選擇不呼叫。"
+                  : "資料還不夠，Agent 決定再查一次。"
+                : first
+                  ? "模型判斷這個問題不需要任何工具，直接回答就好。這是正常且被記錄下來的結果，不是錯誤。"
+                  : "Agent 判斷不需要再查了，可以開始整理回答。",
+              data: [
+                ["第幾回合", turn + " / " + coreTurns],
+                ["判斷結果", turnCalls.length ? "要用工具" : first ? "不用工具" : "不用再查"],
+              ],
+              tech: "agent/loop.py:65 turn.wants_tools；沒有 tool_calls 時走 :73-82 的終止原因對應",
+            });
+
+            if (!turnCalls.length) {
+              exhausted = false;
+              break;
+            }
+
+            turnCalls.forEach((call, idx) => {
+              const info = toolInfo(call.name);
+              const blockId = "b" + block++;
+              const argsText = JSON.stringify(call.arguments || {});
+              const parseFailed = looksLikeParseError(call);
+
+              push({
+                node: "A4",
+                edge: idx === 0 ? "A3>A4" : "A5>A6",
+                turn,
+                title: "挑選要用哪個工具",
+                plain:
+                  "Agent 從所有可用工具裡選出這一個，並決定要傳什麼參數。它是靠每個工具的用途說明來選，不是靠關鍵字。",
+                data: [
+                  ["選中的工具", info.label + "（" + info.key + "）"],
+                  ["傳的參數", argsText],
+                ],
+                tech: "工具描述承擔 model routing 責任；generic system prompt 不列舉任何工具名稱",
+                packet: info.key,
+              });
+
+              if (parseFailed) {
+                push({
+                  node: "M1",
+                  edge: "A4>M1",
+                  turn,
+                  status: "error",
+                  flag: "參數格式錯誤",
+                  title: "參數格式錯誤，工具沒有真的被執行",
+                  plain:
+                    "模型送來的參數格式壞掉了。系統選擇不執行工具，直接把錯誤說明回給模型，讓它自己修正後重試。",
+                  data: [["錯誤", String(call.error || "參數無法解析")]],
+                  tech: "agent/loop.py:142-151 call.parse_error 時不呼叫 handler，直接回可恢復錯誤",
+                });
+              } else {
+                push({
+                  node: "M1",
+                  edge: "A4>M1",
+                  turn,
+                  title: "交給對應的工具服務",
+                  plain:
+                    "工具不是跑在 Agent 裡面，而是獨立的程式。Agent 只知道工具的名字，由這一層決定送到哪個服務。",
+                  data: [
+                    ["送往的服務", info.service],
+                    ["工具", info.key],
+                  ],
+                  tech: "agent/mcp_client.py:377 _bindings[public_name] → (server, remote_name)；stdio 傳輸",
+                  service: info.service,
+                });
+
+                info.steps.forEach((sub, subIdx) => {
+                  const last = subIdx === info.steps.length - 1;
+                  const failedHere = !call.ok && last;
+                  push({
+                    node: "M2",
+                    edge: subIdx === 0 ? "M1>M2" : null,
+                    turn,
+                    status: failedHere ? "error" : "ok",
+                    flag: failedHere ? "失敗" : null,
+                    title: sub.t,
+                    plain: sub.d,
+                    tech: sub.tech || null,
+                    tool: info,
+                    block: blockId,
+                    sub: subIdx,
+                    crumb: sub.n,
+                    ms: 620,
+                    service: info.service,
+                    verdicts: sub.verdicts ? meta.currentVerify || null : null,
+                    data: subStepData(sub, info, call, meta),
+                  });
+                });
+
+                push({
+                  node: "M3",
+                  edge: "M2>M3",
+                  turn,
+                  status: call.ok ? "ok" : "error",
+                  flag: call.ok ? null : "失敗",
+                  title: call.ok ? "回傳結果" : "回傳錯誤訊息",
+                  plain: call.ok
+                    ? "工具把結果交回 Agent。"
+                    : "工具壞掉了。它回傳的是一段錯誤說明，而不是讓整個服務中斷 —— Agent 讀得到這段話，可以自己決定怎麼處理。",
+                  data: call.ok
+                    ? [["狀態", "成功"]]
+                    : [
+                        ["狀態", "失敗"],
+                        ["錯誤", String(call.error || "未知錯誤")],
+                      ],
+                  tech: call.ok
+                    ? "agent/mcp_client.py:418 _result_text：structuredContent 優先，否則串接 text blocks"
+                    : "agent/loop.py:155-164 ToolInvocationError → 以文字回給模型，不中斷 run",
+                  tool: info,
+                  block: blockId,
+                  sub: info.steps.length - 1,
+                  service: info.service,
+                });
+              }
+
+              push({
+                node: "A5",
+                edge: "M3>A5",
+                turn,
+                status: call.ok ? "ok" : "error",
+                title: call.ok ? "讀取工具回傳的結果" : "讀到工具的錯誤訊息",
+                plain: call.ok
+                  ? "工具的結果被放回對話裡，成為模型下一步的依據。"
+                  : "錯誤訊息被放回對話裡。對模型來說這只是一段可以讀的話，它會據此改變回答方式。",
+                data: [["來源工具", toolInfo(call.name).label]],
+                tech: "agent/bridge.py:81 tool_result_message(call, content)",
+                packet: call.ok ? "結果" : "錯誤",
+              });
+            });
+
+            push({
+              node: "A6",
+              edge: "A5>A6",
+              turn,
+              title: "資料夠了嗎？",
+              plain:
+                turn < coreTurns
+                  ? "還不夠。Agent 回到判斷點，準備再查一次 —— 但總回合數有硬上限，不會無止盡地查下去。"
+                  : "夠了。接下來進入品質把關。",
+              data: [
+                ["第幾回合", turn + " / " + coreTurns],
+                ["下一步", turn < coreTurns ? "再查一次" : "進入品質檢查"],
+              ],
+              tech: "agent/loop.py:58 for _ in range(self.max_turns)；耗盡是被記錄的正常結果（MAX_TURNS）",
+            });
+          }
+
+          const usedTools = modelCalls.length > 0;
+          const exitEdge = exhausted ? "A6>A7" : usedTools ? "A3>A7" : "A3>A10";
+
+          if (usedTools) {
+            if (verifyPasses.length) {
+              verifyPasses.forEach((pass, passIdx) => {
+                const passCall = policyCalls[passIdx] || policyCalls[policyCalls.length - 1] || null;
+                const info = toolInfo((passCall && passCall.name) || "verify_translation");
+                const blockId = "b" + block++;
+                const allRight = Number(pass.hit_rate || 0) >= 1;
+                const isLast = passIdx === verifyPasses.length - 1;
+
+                push({
+                  node: "A7",
+                  edge: passIdx === 0 ? exitEdge : "A9>A7",
+                  turn: coreTurns + passIdx,
+                  title: "品質自我檢查",
+                  plain:
+                    "這一步不是使用者要求的。Agent 翻完之後自己回頭確認：該用的專有名詞有沒有真的用上去。",
+                  data: [["第幾次檢查", String(passIdx + 1)]],
+                  tech: "capabilities/translation/policy.py:75 after_run；只在模型成功呼叫過 lookup 且 run 正常完成時才執行",
+                });
+
+                info.steps.forEach((sub, subIdx) => {
+                  push({
+                    node: "M4",
+                    edge: subIdx === 0 ? "A7>M4" : null,
+                    turn: coreTurns + passIdx,
+                    title: sub.t,
+                    plain: sub.d,
+                    tech: sub.tech || null,
+                    tool: info,
+                    block: blockId,
+                    sub: subIdx,
+                    crumb: sub.n,
+                    ms: 620,
+                    service: info.service,
+                    verdicts: sub.verdicts ? pass : null,
+                    data: subStepData(sub, info, passCall || {}, Object.assign({}, meta, { currentVerify: pass })),
+                  });
+                });
+
+                push({
+                  node: "A8",
+                  edge: "M4>A8",
+                  turn: coreTurns + passIdx,
+                  title: "專有名詞都用對了嗎？",
+                  plain: allRight
+                    ? "全部用對了，可以輸出。"
+                    : "有名詞沒用對。只要重做次數與回合數兩個額度都還有剩，就補上正確的英文再翻一次。",
+                  data: [
+                    ["正確率", Math.round(Number(pass.hit_rate || 0) * 100) + "%"],
+                    ["沒用對的", (pass.missed || []).length ? (pass.missed || []).join("、") : "無"],
+                  ],
+                  tech: "policy.py:105-128 while hit_rate<1 且 retranslations<max_retranslate 且 model_turns<max_model_turns",
+                  verdicts: pass,
+                });
+
+                if (!isLast) {
+                  push({
+                    node: "A9",
+                    edge: "A8>A9",
+                    turn: coreTurns + passIdx,
+                    title: "補上漏掉的名詞，重做一次",
+                    plain:
+                      "系統把漏掉的名詞與正確英文逐條列出來，連同前一次的譯文一起送回模型重做。最多兩次 —— 停下來的保證來自次數上限，不是模型有沒有進步。",
+                    data: [
+                      ["這次要補的", (pass.missed || []).join("、") || "（無）"],
+                      ["重做上限", "2 次"],
+                    ],
+                    tech: "capabilities/translation/prompts.py:37-54 retranslate_prompt；新譯文只有不比舊的差才會被採用",
+                  });
+                }
+              });
+            } else {
+              push({
+                node: "A7",
+                edge: exitEdge,
+                status: "skip",
+                flag: "不需檢查",
+                turn: coreTurns,
+                title: "品質自我檢查：這題不需要",
+                plain:
+                  "品質檢查每次都會被叫到，但它會自己判斷這一題用不上 —— 只有真的做過術語查詢的翻譯任務才需要驗證。它安靜地跳過。",
+                data: [["判斷", "沒有可驗證的術語查詢，跳過"]],
+                tech: "policy.py:82-88 條件不成立就回傳空的 PolicyOutcome；core loop 不需要為此加任何 if",
+              });
+            }
+          }
+
+          const lastVerify = verifyPasses.length ? verifyPasses[verifyPasses.length - 1] : null;
+          push({
+            node: "A10",
+            edge: usedTools ? (verifyPasses.length ? "A8>A10" : "A7>A8") : exitEdge,
+            turn: coreTurns + Math.max(0, verifyPasses.length - 1),
+            title: "產出最終回答",
+            plain: "整理完成，回覆使用者。",
+            data: [
+              ["回答", String(result.output || "（空白）")],
+              ["結束原因", stopText(metrics.stop_reason)],
+              lastVerify ? ["名詞正確率", Math.round(Number(lastVerify.hit_rate || 0) * 100) + "%"] : null,
+            ].filter(Boolean),
+            tech: "agent/loop.py:119-133 RunResult；tool_calls 只統計 initiator=MODEL 的紀錄",
+            packet: "回答",
+            ms: 1000,
+          });
+
+          if (usedTools && verifyPasses.length) {
+            /* The final hop is A8 -> A10; when the self-check was skipped the
+               graph goes A7 -> A8 -> A10, so add the missing short hop. */
+            const answer = steps[steps.length - 1];
+            answer.edge = "A8>A10";
+          }
+
+          return steps;
+        }
+
+        function subStepData(sub, info, call, meta) {
+          const rows = [];
+          const args = call.arguments || {};
+          if (info.key === "lookup_terms") {
+            if (sub.n === "①") rows.push(["收到的內容", String(args.text || meta.ask || "—")]);
+            if (sub.n === "③" || sub.n === "⑤" || sub.n === "⑦") {
+              const terms = meta.terms && meta.terms.length ? meta.terms : termsFromVerify(meta.currentVerify);
+              rows.push(["找到的專有名詞", terms.length ? terms.join("、") : "（這次回傳沒有附明細）"]);
+            }
+            if (sub.n === "④") rows.push(["例子", "「臨時額度」蓋過「額度」"]);
+          }
+          if (info.key === "verify_translation") {
+            if (sub.n === "①") {
+              rows.push(["原文", String(args.source || meta.ask || "—")]);
+              if (args.translation) rows.push(["譯文", String(args.translation)]);
+            }
+            if (sub.n === "⑥" && meta.currentVerify) {
+              rows.push(["正確率", Math.round(Number(meta.currentVerify.hit_rate || 0) * 100) + "%"]);
+              rows.push(["沒用對的", (meta.currentVerify.missed || []).join("、") || "無"]);
+            }
+          }
+          if (info.key === "get_time" && sub.n === "①") {
+            rows.push(["時區", String(args.timezone || "Asia/Taipei（預設）")]);
+          }
+          if (info.key === "get_weather" && sub.n === "①") {
+            rows.push(["城市", String(args.city || "—")]);
+          }
+          if (info.key === "say_hello" && sub.n === "①") {
+            rows.push(["姓名", String(args.name || "—")]);
+          }
+          return rows;
+        }
+
+        function termsFromVerify(verify) {
+          if (!verify || !Array.isArray(verify.results)) return [];
+          return verify.results.map((r) => r.zh).filter(Boolean);
+        }
+
+        function stopText(reason) {
+          const map = {
+            completed: "正常完成",
+            max_turns: "用完回合上限",
+            length_limit: "回覆長度受限",
+            content_filter: "內容被過濾",
+            refused: "模型拒答",
+          };
+          return map[String(reason || "")] || String(reason || "—");
+        }
+
+        /* ==================================================================
+         * 4. Canvas: node cards, measured SVG wires, travelling packet.
+         * ================================================================== */
+
+        const canvas = document.querySelector("#canvas");
+        const canvasScroll = document.querySelector("#canvasScroll");
+        const wires = document.querySelector("#wires");
+        const edgeLayer = document.querySelector("#edgeLayer");
+        const labelLayer = document.querySelector("#labelLayer");
+        const packet = document.querySelector("#packet");
+        const packetText = document.querySelector("#packetText");
+        const nodeEls = {};
+        const edgeEls = {};
+        const labelEls = {};
+        const servicePills = {};
+
+        function buildCanvas() {
+          Object.keys(NODES).forEach((key) => {
+            const spec = NODES[key];
+            const el = document.createElement("div");
+            el.className = "node" + (spec.kind ? " " + spec.kind : "");
+            el.id = "node-" + key;
+            el.style.gridRow = String(spec.row);
+            el.style.gridColumn = String(spec.col);
+            const flag = document.createElement("span");
+            flag.className = "node-flag hidden";
+            const num = document.createElement("span");
+            num.className = "node-num";
+            num.textContent = spec.n;
+            const title = document.createElement("strong");
+            title.textContent = spec.t;
+            const sub = document.createElement("span");
+            sub.className = "node-sub";
+            sub.textContent = spec.sub;
+            el.append(flag, num, title, sub);
+            canvas.append(el);
+            nodeEls[key] = { el, flag };
+          });
+
+          const strip = document.createElement("div");
+          strip.className = "service-strip";
+          const stripLabel = document.createElement("span");
+          stripLabel.className = "control-label";
+          stripLabel.textContent = "工具服務";
+          strip.append(stripLabel);
+          SERVICES.forEach((svc) => {
+            const pill = document.createElement("div");
+            pill.className = "service-pill" + (svc.off ? " is-off" : "");
+            const name = document.createElement("span");
+            name.textContent = svc.name;
+            const desc = document.createElement("em");
+            desc.textContent = svc.desc;
+            pill.append(name, desc);
+            strip.append(pill);
+            servicePills[svc.key] = pill;
+          });
+          canvas.append(strip);
+
+          EDGES.forEach((edge) => {
+            const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+            path.setAttribute("class", "edge" + (edge.policy ? " policy" : ""));
+            path.dataset.edge = edge.id;
+            edgeLayer.append(path);
+            edgeEls[edge.id] = path;
+            if (edge.label) {
+              const text = document.createElementNS("http://www.w3.org/2000/svg", "text");
+              text.setAttribute("class", "edge-label");
+              text.textContent = edge.label;
+              labelLayer.append(text);
+              labelEls[edge.id] = text;
+            }
+          });
+        }
+
+        /* Offsets, not getBoundingClientRect: the canvas is the offsetParent,
+           so these stay correct mid-scroll and would survive a CSS transform. */
+        function boxOf(key) {
+          const el = nodeEls[key].el;
+          return { x: el.offsetLeft, y: el.offsetTop, w: el.offsetWidth, h: el.offsetHeight };
+        }
+
+        function unit(from, to) {
+          const dx = from.x - to.x;
+          const dy = from.y - to.y;
+          const len = Math.hypot(dx, dy) || 1;
+          return { x: dx / len, y: dy / len };
+        }
+
+        function pathFromPoints(pts, radius) {
+          const r = radius == null ? 12 : radius;
+          if (pts.length < 2) return "";
+          let d = "M " + pts[0].x + " " + pts[0].y;
+          for (let i = 1; i < pts.length - 1; i += 1) {
+            const p = pts[i];
+            const prev = pts[i - 1];
+            const next = pts[i + 1];
+            const back = Math.hypot(p.x - prev.x, p.y - prev.y) / 2;
+            const fwd = Math.hypot(next.x - p.x, next.y - p.y) / 2;
+            const rr = Math.max(0, Math.min(r, back, fwd));
+            const v1 = unit(prev, p);
+            const v2 = unit(next, p);
+            d += " L " + (p.x + v1.x * rr) + " " + (p.y + v1.y * rr);
+            d += " Q " + p.x + " " + p.y + " " + (p.x + v2.x * rr) + " " + (p.y + v2.y * rr);
+          }
+          const last = pts[pts.length - 1];
+          d += " L " + last.x + " " + last.y;
+          return d;
+        }
+
+        function routePoints(edge) {
+          const a = boxOf(edge.from);
+          const b = boxOf(edge.to);
+          const ac = { x: a.x + a.w / 2, y: a.y + a.h / 2 };
+          const bc = { x: b.x + b.w / 2, y: b.y + b.h / 2 };
+          const lift = edge.lift || 26;
+
+          if (edge.shape === "h") {
+            return [
+              { x: a.x + a.w + 3, y: ac.y },
+              { x: b.x - 5, y: bc.y },
+            ];
+          }
+          if (edge.shape === "down") {
+            const mid = (a.y + a.h + b.y) / 2;
+            return [
+              { x: ac.x, y: a.y + a.h + 3 },
+              { x: ac.x, y: mid },
+              { x: bc.x, y: mid },
+              { x: bc.x, y: b.y - 5 },
+            ];
+          }
+          if (edge.shape === "up") {
+            const mid = (b.y + b.h + a.y) / 2;
+            return [
+              { x: ac.x, y: a.y - 3 },
+              { x: ac.x, y: mid },
+              { x: bc.x, y: mid },
+              { x: bc.x, y: b.y + b.h + 5 },
+            ];
+          }
+          if (edge.shape === "back") {
+            const lane = a.y + a.h + lift;
+            return [
+              { x: ac.x, y: a.y + a.h + 3 },
+              { x: ac.x, y: lane },
+              { x: bc.x, y: lane },
+              { x: bc.x, y: b.y + b.h + 5 },
+            ];
+          }
+          const lane = Math.min(a.y, b.y) - lift;
+          return [
+            { x: ac.x, y: a.y - 3 },
+            { x: ac.x, y: lane },
+            { x: bc.x, y: lane },
+            { x: bc.x, y: b.y - 5 },
+          ];
+        }
+
+        function layoutWires() {
+          const width = canvas.offsetWidth;
+          const height = canvas.offsetHeight;
+          wires.setAttribute("width", String(width));
+          wires.setAttribute("height", String(height));
+          wires.setAttribute("viewBox", "0 0 " + width + " " + height);
+          EDGES.forEach((edge) => {
+            const path = edgeEls[edge.id];
+            path.setAttribute("d", pathFromPoints(routePoints(edge)));
+            const label = labelEls[edge.id];
+            if (!label) return;
+            if (edge.shape === "h") {
+              // Adjacent columns leave only the grid gap between them, so a
+              // label centred on the line would sit on top of both nodes.
+              // Lift it clear of the card instead.
+              const a = boxOf(edge.from);
+              const b = boxOf(edge.to);
+              label.setAttribute("x", String((a.x + a.w + b.x) / 2));
+              label.setAttribute("y", String(Math.min(a.y, b.y) - 8));
+              return;
+            }
+            const total = path.getTotalLength();
+            if (!total) return;
+            const at = path.getPointAtLength(total * 0.42);
+            label.setAttribute("x", String(at.x));
+            label.setAttribute("y", String(at.y - 9));
+          });
+        }
+
+        let packetRaf = null;
+
+        function stopPacket() {
+          if (packetRaf) cancelAnimationFrame(packetRaf);
+          packetRaf = null;
+          packet.setAttribute("opacity", "0");
+        }
+
+        function runPacket(edgeId, text, duration) {
+          stopPacket();
+          const path = edgeEls[edgeId];
+          if (!path) return Promise.resolve();
+          const total = path.getTotalLength();
+          if (!total) return Promise.resolve();
+          packetText.textContent = text ? String(text).slice(0, 16) : "";
+          packet.setAttribute("opacity", "1");
+          if (REDUCED) {
+            const end = path.getPointAtLength(total);
+            packet.setAttribute("transform", "translate(" + end.x + "," + end.y + ")");
+            return new Promise((resolve) => setTimeout(resolve, 90));
+          }
+          return new Promise((resolve) => {
+            const started = performance.now();
+            const tick = (now) => {
+              const ratio = Math.min(1, (now - started) / Math.max(120, duration));
+              const at = path.getPointAtLength(total * ratio);
+              packet.setAttribute("transform", "translate(" + at.x + "," + at.y + ")");
+              if (ratio < 1) {
+                packetRaf = requestAnimationFrame(tick);
+              } else {
+                packetRaf = null;
+                packet.setAttribute("opacity", "0");
+                resolve();
+              }
+            };
+            packetRaf = requestAnimationFrame(tick);
+          });
+        }
+
+        /* ==================================================================
+         * 5. Player
+         * ================================================================== */
+
+        const player = {
+          steps: [],
+          index: -1,
+          playing: false,
+          speed: 1,
+          stepMode: false,
+          timer: null,
+          envelope: null,
+          meta: {},
+        };
+
+        const els = {
+          scenarioPicker: document.querySelector("#scenarioPicker"),
+          scrubber: document.querySelector("#scrubber"),
+          turnRibbon: document.querySelector("#turnRibbon"),
+          btnPlay: document.querySelector("#btnPlay"),
+          btnPrev: document.querySelector("#btnPrev"),
+          btnNext: document.querySelector("#btnNext"),
+          btnReplay: document.querySelector("#btnReplay"),
+          stepMode: document.querySelector("#stepMode"),
+          techMode: document.querySelector("#techMode"),
+          stepLane: document.querySelector("#stepLane"),
+          stepTitle: document.querySelector("#stepTitle"),
+          stepPlain: document.querySelector("#stepPlain"),
+          stepData: document.querySelector("#stepData"),
+          stepTech: document.querySelector("#stepTech"),
+          subTitle: document.querySelector("#subTitle"),
+          subTag: document.querySelector("#subTag"),
+          subList: document.querySelector("#subList"),
+          verdicts: document.querySelector("#verdicts"),
+          mTurns: document.querySelector("#mTurns"),
+          mTools: document.querySelector("#mTools"),
+          mStop: document.querySelector("#mStop"),
+          mHit: document.querySelector("#mHit"),
+          rawOutput: document.querySelector("#rawOutput"),
+          compareBody: document.querySelector("#compareBody"),
+          realForm: document.querySelector("#realForm"),
+          realText: document.querySelector("#realText"),
+          realTurns: document.querySelector("#realTurns"),
+          realNote: document.querySelector("#realNote"),
+          httpGateway: document.querySelector("#httpGateway"),
+          btnRun: document.querySelector("#btnRun"),
+          status: document.querySelector("#serverStatus"),
+          statusText: document.querySelector("#serverStatusText"),
+        };
+
+        function selected(name) {
+          const found = document.querySelector('input[name="' + name + '"]:checked');
+          return found ? found.value : null;
+        }
+
+        function buildScrubber() {
+          els.scrubber.replaceChildren();
+          player.steps.forEach((step, idx) => {
+            const tick = document.createElement("button");
+            tick.type = "button";
+            tick.className = "tick";
+            const prev = player.steps[idx - 1];
+            if (!prev || prev.turn !== step.turn) tick.classList.add("turn-start");
+            tick.title = "第 " + (idx + 1) + " 步 · " + step.title;
+            tick.setAttribute("aria-label", tick.title);
+            tick.addEventListener("click", () => {
+              pause();
+              gotoStep(idx, false);
+            });
+            els.scrubber.append(tick);
+          });
+        }
+
+        function renderScrubber() {
+          const ticks = els.scrubber.children;
+          for (let i = 0; i < ticks.length; i += 1) {
+            const tick = ticks[i];
+            tick.classList.toggle("is-done", i < player.index);
+            tick.classList.toggle("is-active", i === player.index);
+            tick.classList.toggle("is-error", i <= player.index && player.steps[i].status === "error");
+          }
+        }
+
+        function statusClass(status) {
+          if (status === "error") return "is-error";
+          if (status === "skip") return "is-skip";
+          return "is-done";
+        }
+
+        function applyNodeStates() {
+          Object.keys(nodeEls).forEach((key) => {
+            nodeEls[key].el.className =
+              "node" + (NODES[key].kind ? " " + NODES[key].kind : "");
+            nodeEls[key].flag.classList.add("hidden");
+            nodeEls[key].flag.textContent = "";
+          });
+          Object.keys(edgeEls).forEach((id) => {
+            edgeEls[id].classList.remove("is-done", "is-active");
+            if (labelEls[id]) labelEls[id].classList.remove("is-active");
+          });
+          Object.keys(servicePills).forEach((key) => {
+            servicePills[key].classList.remove("is-active");
+          });
+
+          for (let i = 0; i <= player.index; i += 1) {
+            const step = player.steps[i];
+            const node = nodeEls[step.node];
+            if (node) {
+              node.el.classList.add(statusClass(step.status));
+              if (step.flag) {
+                node.flag.textContent = step.flag;
+                node.flag.classList.remove("hidden");
+              }
+            }
+            if (step.edge && edgeEls[step.edge]) edgeEls[step.edge].classList.add("is-done");
+            if (step.service && servicePills[step.service]) {
+              servicePills[step.service].classList.add("is-active");
+            }
+          }
+
+          const current = player.steps[player.index];
+          if (!current) return;
+          const node = nodeEls[current.node];
+          if (node) node.el.classList.add("is-active");
+          if (current.edge && edgeEls[current.edge]) {
+            edgeEls[current.edge].classList.remove("is-done");
+            edgeEls[current.edge].classList.add("is-active");
+            if (labelEls[current.edge]) labelEls[current.edge].classList.add("is-active");
+          }
+        }
+
+        function renderPanel() {
+          const step = player.steps[player.index];
+          if (!step) return;
+          const spec = NODES[step.node];
+          const lane = spec ? spec.lane : "agent";
+          els.stepLane.className = "step-lane " + lane;
+          els.stepLane.textContent = lane === "agent" ? "AGENT · 判斷與決策" : "MCP · 工具服務";
+          els.stepTitle.textContent = step.crumb
+            ? (spec ? spec.n + " " + spec.t + " · " : "") + step.crumb + " " + step.title
+            : (spec ? spec.n + " " : "") + step.title;
+          els.stepPlain.textContent = step.plain || "";
+
+          els.stepData.replaceChildren();
+          (step.data || []).forEach(([key, value]) => {
+            const wrap = document.createElement("div");
+            const dt = document.createElement("dt");
+            dt.textContent = key;
+            const dd = document.createElement("dd");
+            dd.textContent = value;
+            wrap.append(dt, dd);
+            els.stepData.append(wrap);
+          });
+
+          if (step.tech) {
+            els.stepTech.replaceChildren();
+            const label = document.createElement("b");
+            label.textContent = "工程視角";
+            const body = document.createTextNode(step.tech);
+            els.stepTech.append(label, body);
+            els.stepTech.classList.remove("hidden");
+          } else {
+            els.stepTech.classList.add("hidden");
+          }
+
+          const turns = player.steps.length ? player.steps[player.steps.length - 1].turn : 1;
+          els.turnRibbon.textContent =
+            "第 " + step.turn + " / " + turns + " 回合 · 第 " + (player.index + 1) + " / " + player.steps.length + " 步";
+        }
+
+        function renderSubsteps() {
+          let step = player.steps[player.index];
+          let cursor = player.index;
+          while (cursor >= 0 && !player.steps[cursor].tool) cursor -= 1;
+          const anchor = cursor >= 0 ? player.steps[cursor] : null;
+
+          if (!anchor) {
+            els.subTitle.textContent = "工具內部流程";
+            els.subTag.textContent = "尚未進入工具";
+            els.subList.replaceChildren();
+            els.verdicts.classList.add("hidden");
+            return;
+          }
+
+          const info = anchor.tool;
+          const active = step && step.tool && step.block === anchor.block ? anchor.sub : info.steps.length - 1;
+          const isCurrent = Boolean(step && step.tool && step.block === anchor.block);
+          els.subTitle.textContent = info.label;
+          els.subTag.textContent = info.key + " · " + info.service;
+
+          els.subList.replaceChildren();
+          info.steps.forEach((sub, idx) => {
+            const li = document.createElement("li");
+            li.className = "substep";
+            if (idx < active) li.classList.add("is-done");
+            if (idx === active) li.classList.add(isCurrent ? "is-active" : "is-done");
+            if (idx === active && anchor.status === "error" && isCurrent) li.classList.add("is-error");
+            const title = document.createElement("b");
+            const num = document.createElement("span");
+            num.textContent = sub.n + " ";
+            title.append(num, document.createTextNode(sub.t));
+            const desc = document.createElement("i");
+            desc.textContent = sub.d;
+            li.append(title, desc);
+            els.subList.append(li);
+          });
+
+          const verify = step && step.verdicts ? step.verdicts : null;
+          if (verify && Array.isArray(verify.results) && verify.results.length) {
+            els.verdicts.replaceChildren();
+            verify.results.forEach((item) => {
+              const kind = String(item.verdict || "").toUpperCase();
+              const chip = document.createElement("span");
+              chip.className =
+                "verdict " + (kind === "HIT" ? "hit" : kind === "WRONG" ? "wrong" : "miss");
+              const mark = document.createElement("span");
+              mark.className = "mark";
+              const name = document.createElement("b");
+              name.textContent = item.zh;
+              const detail = document.createElement("span");
+              detail.textContent =
+                verdictLabel(kind) + (item.found ? "（譯文用的是 " + item.found + "）" : "");
+              chip.append(mark, name, detail);
+              els.verdicts.append(chip);
+            });
+            els.verdicts.classList.remove("hidden");
+          } else {
+            els.verdicts.classList.add("hidden");
+          }
+        }
+
+        function renderSummary() {
+          const result = (player.envelope && player.envelope.result) || {};
+          const metrics = result.metrics || {};
+          els.mTurns.textContent = metrics.turns == null ? "—" : String(metrics.turns);
+          els.mTools.textContent = metrics.tool_calls == null ? "—" : String(metrics.tool_calls);
+          els.mStop.textContent = stopText(metrics.stop_reason);
+          els.mHit.textContent = result.verify
+            ? Math.round(Number(result.verify.hit_rate || 0) * 100) + "%"
+            : "不適用";
+          els.rawOutput.textContent = player.envelope
+            ? JSON.stringify(player.envelope, null, 2)
+            : "尚無資料";
+        }
+
+        function scrollIntoView(step) {
+          const node = nodeEls[step.node];
+          if (!node) return;
+          const box = boxOf(step.node);
+          const target = box.x + box.w / 2 - canvasScroll.clientWidth / 2;
+          canvasScroll.scrollTo({
+            left: Math.max(0, target),
+            behavior: REDUCED ? "auto" : "smooth",
+          });
+        }
+
+        function gotoStep(index, animate) {
+          const clamped = Math.max(0, Math.min(player.steps.length - 1, index));
+          const step = player.steps[clamped];
+          if (!step) return Promise.resolve();
+          player.index = clamped;
+          applyNodeStates();
+          renderScrubber();
+          renderPanel();
+          renderSubsteps();
+          scrollIntoView(step);
+          updateButtons();
+          if (animate && step.edge) {
+            return runPacket(step.edge, step.packet, (step.ms || 850) / player.speed);
+          }
+          stopPacket();
+          return Promise.resolve();
+        }
+
+        function updateButtons() {
+          els.btnPlay.textContent = player.playing ? "⏸ 暫停" : player.index >= player.steps.length - 1 ? "↻ 重播" : "▶ 播放";
+          els.btnPrev.disabled = player.index <= 0;
+          els.btnNext.disabled = player.index >= player.steps.length - 1;
+        }
+
+        function clearTimer() {
+          if (player.timer) clearTimeout(player.timer);
+          player.timer = null;
+        }
+
+        function pause() {
+          player.playing = false;
+          clearTimer();
+          stopPacket();
+          updateButtons();
+        }
+
+        function scheduleNext() {
+          clearTimer();
+          if (!player.playing) return;
+          const step = player.steps[player.index];
+          const wait = Math.max(180, (step ? step.ms || 850 : 850) / player.speed);
+          player.timer = setTimeout(() => {
+            if (!player.playing) return;
+            if (player.index >= player.steps.length - 1) {
+              pause();
+              return;
+            }
+            advance();
+          }, wait);
+        }
+
+        function advance() {
+          gotoStep(player.index + 1, true);
+          if (player.stepMode) {
+            pause();
+            return;
+          }
+          scheduleNext();
+        }
+
+        function play() {
+          if (player.index >= player.steps.length - 1) {
+            gotoStep(0, true);
+          }
+          player.playing = true;
+          updateButtons();
+          scheduleNext();
+        }
+
+        function togglePlay() {
+          if (player.playing) {
+            pause();
+          } else if (player.index >= player.steps.length - 1) {
+            replay();
+          } else {
+            play();
+          }
+        }
+
+        function replay() {
+          pause();
+          gotoStep(0, true);
+          player.playing = true;
+          updateButtons();
+          scheduleNext();
+        }
+
+        function loadRun(envelope, meta) {
+          pause();
+          player.envelope = envelope;
+          player.meta = meta;
+          player.steps = buildSteps(envelope, meta);
+          player.index = -1;
+          buildScrubber();
+          renderSummary();
+          layoutWires();
+          gotoStep(0, false);
+        }
+
+        /* ==================================================================
+         * 6. Scenario wiring, live runs, capabilities probe
+         * ================================================================== */
+
+        let toolCount = null;
+        let currentScenario = SCENARIOS[0];
+
+        function scenarioMeta(scenario) {
+          return {
+            ask: scenario.ask,
+            profile: scenario.profile,
+            toolCount,
+            verifyPasses: scenario.verifyPasses || null,
+            terms: scenario.terms || null,
+            currentVerify:
+              (scenario.verifyPasses && scenario.verifyPasses[scenario.verifyPasses.length - 1]) ||
+              (scenario.envelope.result && scenario.envelope.result.verify) ||
+              null,
+          };
+        }
+
+        function playScenario(scenario, autoplay) {
+          currentScenario = scenario;
+          loadRun(scenario.envelope, scenarioMeta(scenario));
+          highlightCompare();
+          if (autoplay) play();
+        }
+
+        function buildScenarioPicker() {
+          SCENARIOS.forEach((scenario, idx) => {
+            const label = document.createElement("label");
+            const input = document.createElement("input");
+            input.type = "radio";
+            input.name = "scenario";
+            input.value = scenario.key;
+            if (idx === 0) input.checked = true;
+            const span = document.createElement("span");
+            span.textContent = scenario.tab;
+            label.append(input, span);
+            els.scenarioPicker.append(label);
+            input.addEventListener("change", () => {
+              if (!input.checked) return;
+              if (selected("source") === "live") {
+                els.realText.value = scenario.ask;
+                const profile = document.querySelector(
+                  'input[name="profile"][value="' + scenario.profile + '"]'
+                );
+                if (profile) profile.checked = true;
+                currentScenario = scenario;
+                highlightCompare();
+                return;
+              }
+              playScenario(scenario, true);
+            });
+          });
+        }
+
+        function buildCompare() {
+          SCENARIOS.forEach((scenario) => {
+            const tr = document.createElement("tr");
+            tr.dataset.key = scenario.key;
+            const cells = [
+              scenario.ask,
+              scenario.judgement,
+              scenario.toolsText,
+              scenario.turnsText,
+              scenario.takeaway,
+            ];
+            cells.forEach((value, idx) => {
+              const td = document.createElement("td");
+              if (idx === 2 || idx === 3) td.className = "num";
+              td.textContent = value;
+              tr.append(td);
+            });
+            tr.addEventListener("click", () => {
+              const input = document.querySelector(
+                'input[name="scenario"][value="' + scenario.key + '"]'
+              );
+              if (input) {
+                input.checked = true;
+                input.dispatchEvent(new Event("change"));
+              }
+              document.querySelector("#canvasScroll").scrollIntoView({
+                behavior: REDUCED ? "auto" : "smooth",
+                block: "center",
+              });
+            });
+            els.compareBody.append(tr);
+          });
+        }
+
+        function highlightCompare() {
+          Array.from(els.compareBody.children).forEach((row) => {
+            row.classList.toggle("is-current", row.dataset.key === currentScenario.key);
+          });
+        }
+
+        function setStatus(kind, text) {
+          els.status.classList.remove("online", "offline");
+          if (kind) els.status.classList.add(kind);
+          els.statusText.textContent = text;
+        }
+
+        async function loadCapabilities() {
+          try {
+            const response = await fetch("/api/v1/capabilities", { cache: "no-store" });
+            if (!response.ok) throw new Error("HTTP " + response.status);
+            const health = await response.json();
+            toolCount = Array.isArray(health.tools) ? health.tools.length : null;
+            setStatus("online", "Agent 服務正常");
+            if (!health.http_gateway_configured) {
+              els.httpGateway.disabled = true;
+            }
+          } catch (error) {
+            toolCount = null;
+            setStatus("offline", "只能看示範情境");
+            els.httpGateway.disabled = true;
+          }
+        }
+
+        async function runLive(event) {
+          event.preventDefault();
+          const text = els.realText.value.trim();
+          if (!text) {
+            els.realText.focus();
+            return;
+          }
+          const turns = Number.parseInt(els.realTurns.value, 10);
+          if (!Number.isInteger(turns) || turns < 1 || turns > 20) {
+            els.realTurns.focus();
+            els.realNote.textContent = "回合上限必須介於 1 到 20。";
+            return;
+          }
+
+          pause();
+          els.btnRun.disabled = true;
+          els.btnRun.textContent = "執行中…";
+          els.realNote.textContent = "正在執行，完成後會自動播放整段流程。";
+
+          try {
+            const response = await fetch("/api/v1/runs", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                text,
+                gateway: selected("gateway") || "fake",
+                profile: selected("profile") || "generic",
+                max_turns: turns,
+              }),
+            });
+            let payload = null;
+            try {
+              payload = await response.json();
+            } catch (_) {
+              payload = null;
+            }
+            if (!response.ok) {
+              const message =
+                payload && payload.error && payload.error.message
+                  ? payload.error.message
+                  : "伺服器回傳 HTTP " + response.status;
+              throw new Error(message);
+            }
+            const verify = payload.result && payload.result.verify ? payload.result.verify : null;
+            loadRun(payload, {
+              ask: text,
+              profile: selected("profile") || "generic",
+              toolCount,
+              verifyPasses: verify ? [verify] : null,
+              terms: termsFromVerify(verify),
+              currentVerify: verify,
+            });
+            els.realNote.textContent =
+              "這一段流程完全來自後端真正跑完的結果。共 " +
+              ((payload.result && payload.result.metrics && payload.result.metrics.turns) || "?") +
+              " 個回合，耗時 " +
+              (payload.duration_ms == null ? "?" : payload.duration_ms) +
+              " ms —— 所以必須放慢才看得見。";
+            setStatus("online", "Agent 服務正常");
+            play();
+          } catch (error) {
+            els.realNote.textContent =
+              "執行失敗：" + (error instanceof Error ? error.message : "請查看伺服器紀錄。");
+            setStatus("offline", "執行失敗");
+          } finally {
+            els.btnRun.disabled = false;
+            els.btnRun.textContent = "執行並播放";
+          }
+        }
+
+        /* ==================================================================
+         * 7. Bootstrap
+         * ================================================================== */
+
+        buildCanvas();
+        buildScenarioPicker();
+        buildCompare();
+
+        els.btnPlay.addEventListener("click", togglePlay);
+        els.btnNext.addEventListener("click", () => {
+          pause();
+          gotoStep(player.index + 1, true);
+        });
+        els.btnPrev.addEventListener("click", () => {
+          pause();
+          gotoStep(player.index - 1, false);
+        });
+        els.btnReplay.addEventListener("click", replay);
+
+        els.stepMode.addEventListener("change", () => {
+          player.stepMode = els.stepMode.checked;
+          if (player.stepMode) pause();
+        });
+
+        els.techMode.addEventListener("change", () => {
+          document.body.dataset.tech = els.techMode.checked ? "on" : "off";
+        });
+
+        document.querySelectorAll('input[name="speed"]').forEach((input) => {
+          input.addEventListener("change", () => {
+            if (!input.checked) return;
+            player.speed = Number(input.value) || 1;
+            if (player.playing) scheduleNext();
+          });
+        });
+
+        document.querySelectorAll('input[name="source"]').forEach((input) => {
+          input.addEventListener("change", () => {
+            if (!input.checked) return;
+            const live = input.value === "live";
+            els.realForm.classList.toggle("hidden", !live);
+            if (live) {
+              pause();
+              els.realText.value = currentScenario.ask;
+              const profile = document.querySelector(
+                'input[name="profile"][value="' + currentScenario.profile + '"]'
+              );
+              if (profile) profile.checked = true;
+              els.realNote.textContent = els.httpGateway.disabled
+                ? "「離線模擬」不需要憑證。真實模型未設定，所以無法選。"
+                : "「離線模擬」不需要任何模型憑證，可直接驗證整條 Agent → 工具的線路。";
+            } else {
+              playScenario(currentScenario, false);
+            }
+          });
+        });
+
+        els.realForm.addEventListener("submit", runLive);
+
+        document.addEventListener("keydown", (event) => {
+          const tag = (event.target && event.target.tagName) || "";
+          if (tag === "INPUT" || tag === "TEXTAREA") return;
+          if (event.key === " ") {
+            event.preventDefault();
+            togglePlay();
+          } else if (event.key === "ArrowRight") {
+            event.preventDefault();
+            pause();
+            gotoStep(player.index + 1, true);
+          } else if (event.key === "ArrowLeft") {
+            event.preventDefault();
+            pause();
+            gotoStep(player.index - 1, false);
+          } else if (event.key === "r" || event.key === "R") {
+            replay();
+          }
+        });
+
+        if (typeof ResizeObserver === "function") {
+          const observer = new ResizeObserver(() => layoutWires());
+          observer.observe(canvas);
+        }
+        window.addEventListener("resize", layoutWires);
+
+        playScenario(SCENARIOS[0], false);
+        loadCapabilities();
+      })();
+    </script>
+  </body>
+</html>
