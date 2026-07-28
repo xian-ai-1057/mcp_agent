@@ -25,15 +25,58 @@ Regarding the request: temporary credit limit.
 
 ---
 
+## 0. 它在做什麼
+
+```mermaid
+flowchart TD
+    U(["使用者<br/>請幫我翻譯：客戶申請提高臨時額度"]) --> A1
+
+    A1["① 模型看工具清單，決定呼叫哪個工具<br/>（也可能什麼都不叫 —— 這是被量測的風險）"]
+    A2["② 查術語<br/>臨時額度 → temporary credit limit"]
+    A3["③ 依術語產生譯文"]
+    A4{"④ 自檢<br/>術語真的用了嗎？"}
+
+    A1 -->|翻譯類請求| A2
+    A2 --> A3
+    A3 --> A4
+    A4 -->|有漏，且未達重譯上限| A3
+    A4 -->|都用到了 或 用完重譯次數| OUT
+
+    A1 -->|其他請求，例如問時間| OTHER["呼叫對應的工具<br/>get_time / get_weather / say_hello"]
+    OTHER --> OUT
+
+    OUT(["譯文 + 命中率<br/>The customer applied to raise<br/>the temporary credit limit."])
+
+    GL[("術語對照表 CSV<br/>唯讀資產")] -.-> A2
+    GL -.-> A4
+```
+
+**第 ① 步是風險所在**：離線實驗顯示模型有查術語是 98.1% / 99.0%，沒查是 42.7% / 49.7%。
+所以「模型有沒有呼叫工具」被列為量測指標，不是假設。
+
+> 完整的架構圖與流程圖（共 11 張）在 **[`docs/architecture.md`](docs/architecture.md)**。
+
 ## 1. 分層與權責
 
-```
-agent/        Client 層：gateway 呼叫、格式轉換、agent loop、prompts、CLI
-server.py     MCP 介面層：工具註冊、schema 宣告、錯誤轉換
-tools/        工具層：一個工具一個模組，自帶 name / description / schema
-glossary/     知識層：對照表載入、關鍵詞掃描、命中判定
-contracts/    跨層契約（Pydantic v2）
-evals/        端到端評測harness
+```mermaid
+flowchart TD
+    L1["<b>agent/ — Client 層</b><br/>cli · loop · gateway · bridge · mcp_client · prompts · metrics"]
+    L2["<b>server.py — MCP 介面層</b><br/>零業務邏輯、零工具名稱"]
+    L3["<b>tools/ — 工具層</b><br/>registry · base · 5 個工具模組"]
+    L4["<b>glossary/ — 知識層</b><br/>loader · scanner · matcher · normalize"]
+    CSV[("data/glossary.csv<br/>唯讀資產")]
+    CT["<b>contracts/ — 跨層契約</b><br/>Pydantic v2，Phase 0 定稿"]
+
+    L1 -->|"spawn 子行程<br/>stdio JSON-RPC"| L2
+    L2 -->|"discover / SPEC.run"| L3
+    L3 -->|"scan / match_terms"| L4
+    L4 --> CSV
+
+    L3 -.->|"唯一例外：只 import 純文字的 prompts.py"| L1
+
+    L1 -.-> CT
+    L3 -.-> CT
+    L4 -.-> CT
 ```
 
 > **glossary 不知道 MCP 存在；tools 不知道 gateway 存在；agent 不知道對照表怎麼比對。**
@@ -181,7 +224,9 @@ python -m evals.run_eval --suite routing --gateway fake --limit 4
 
 ## 9. 文件
 
+- **[`docs/architecture.md`](docs/architecture.md)** — 架構圖與流程圖（11 張 Mermaid）
 - `specs/001-glossary-core/spec.md` — 載入、mtime 重載、最長優先掃描、命中判定
 - `specs/002-mcp-tools/spec.md` — 工具契約、自動註冊、五個工具的 schema
 - `specs/003-agent-client/spec.md` — gateway、格式轉換、agent loop、prompts、CLI
 - `data/README.md` — 對照表 schema 與換檔方式
+- `CLAUDE.md` — 給後續維護者的注意事項

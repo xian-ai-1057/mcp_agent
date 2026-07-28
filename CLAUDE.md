@@ -60,6 +60,27 @@ One file in `tools/` exporting a `SPEC`. Nothing else. Write the `description`
 to say *when to call it*, and to disambiguate against its siblings — the system
 prompt is generic, so the description carries the entire routing burden.
 
+Then check `docs/architecture.md`: `tests/test_docs.py` fails if a registered
+tool is missing from the diagrams, because a diagram that is confidently wrong
+is worse than no diagram.
+
+## Diagrams
+
+`docs/architecture.md` holds 11 Mermaid diagrams; the high-level flow and the
+layering diagram are duplicated into `README.md`. Two things to know:
+
+- **Mermaid keywords cannot be participant aliases.** `participant Loop` parses
+  in some tools and then fails to render on GitHub — `loop`, `alt`, `opt`, `par`
+  and `end` are all reserved. `tests/test_docs.py` checks this.
+- **Validate by rendering, not by reading.** A diagram that parses can still be
+  laid out unreadably. To check locally:
+
+  ```bash
+  npm install @mermaid-js/mermaid-cli
+  echo '{"executablePath":"/opt/pw-browsers/chromium","args":["--no-sandbox"]}' > pptr.json
+  npx mmdc -p pptr.json -i diagram.mmd -o out.png -b white
+  ```
+
 ## Open items
 
 - `data/glossary.csv` is a 71-term sample; the production asset is 379 terms and
