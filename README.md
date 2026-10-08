@@ -1,7 +1,23 @@
 # MCP Agent
 
-可設定、可擴充的通用 tool-calling Agent。Agent core 只負責 model → tool → model
-迴圈；翻譯、一般工具與 RAG 上傳分別由獨立 MCP server 提供。
+A modular Python agent for connecting an OpenAI-compatible model to multiple Model Context Protocol (MCP) tool servers. It explores a practical integration problem: adding domain tools and validation policies without coupling them to the model-to-tool orchestration loop.
+
+## What is implemented
+
+- A capability-neutral `AgentLoop`, a configurable stdio `MCPToolPool`, and separate utility and translation servers
+- CLI access and a FastAPI `AgentService` with a local browser workbench, structured run results, tool-call records, and bounded execution
+- An optional translation profile with glossary lookup, verification, and bounded repair
+- An explicitly configured RAG upload adapter with allowed-root and knowledge-base restrictions, symlink rejection, and file-size checks; an accepted upload receipt does not mean indexing is complete
+
+## Status and validation
+
+This is a development-oriented implementation. The browser workbench has no built-in authentication, and each request is an independent run. Streaming, multi-tenant access control, and a general approval protocol are not implemented.
+
+The repository includes unit, integration, packaging, and acceptance tests. No test CI workflow or real-model evaluation report is currently checked in. The fake gateway and evaluation harness exercise control flow; their outputs are not evidence of model accuracy.
+
+Start with the [quick start](#快速開始), inspect the [architecture](docs/architecture.md), or browse the [tests](tests/) and [MCP configuration example](config/mcp_servers.example.json). Detailed setup and operating notes continue below.
+
+### Runtime overview
 
 ```text
 Browser / other app ──HTTP──> FastAPI / AgentService ──┐
