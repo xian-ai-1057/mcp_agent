@@ -330,9 +330,18 @@ def create_app(
         cors_origins=_origins_from_env(),
         trusted_hosts=_trusted_hosts_from_env(),
     )
-    index_html = files("agent").joinpath("static", "index.html").read_text(encoding="utf-8")
-    style_hash = _inline_content_hash(index_html, "style")
-    script_hash = _inline_content_hash(index_html, "script")
+    # Each page carries its own inline style/script, so each needs its own CSP
+    # hashes. `_inline_content_hash` matches the *first* inline block of a tag,
+    # which is why a page must never contain a second <style> or <script>.
+    def read_page(name: str) -> str:
+        return files("agent").joinpath("static", name).read_text(encoding="utf-8")
+
+    index_html = read_page("index.html")
+    flow_html = read_page("flow.html")
+    pages = {
+        "/": (index_html, _csp_for(index_html)),
+        "/flow": (flow_html, _csp_for(flow_html)),
+    }
 
     @asynccontextmanager
     async def lifespan(application: FastAPI) -> AsyncIterator[None]:
@@ -413,15 +422,11 @@ def create_app(
         response.headers["X-Frame-Options"] = "DENY"
         response.headers["Referrer-Policy"] = "no-referrer"
         response.headers["X-Request-ID"] = uuid4().hex
-        if request.url.path == "/" or request.url.path.startswith("/api/"):
+        page = pages.get(request.url.path)
+        if page is not None or request.url.path.startswith("/api/"):
             response.headers["Cache-Control"] = "no-store"
-        if request.url.path == "/":
-            response.headers["Content-Security-Policy"] = (
-                f"default-src 'self'; script-src 'self' '{script_hash}'; "
-                f"style-src 'self' '{style_hash}'; connect-src 'self'; "
-                "img-src 'self' data:; object-src 'none'; base-uri 'none'; "
-                "form-action 'self'; frame-ancestors 'none'"
-            )
+        if page is not None:
+            response.headers["Content-Security-Policy"] = page[1]
         return response
 
     @application.exception_handler(AgentAPIError)
@@ -458,6 +463,10 @@ def create_app(
     @application.get("/", response_class=HTMLResponse, include_in_schema=False)
     async def index() -> HTMLResponse:
         return HTMLResponse(index_html)
+
+    @application.get("/flow", response_class=HTMLResponse, include_in_schema=False)
+    async def flow() -> HTMLResponse:
+        return HTMLResponse(flow_html)
 
     @application.get(
         "/healthz",
@@ -516,6 +525,18 @@ def _error_response(status: int, code: str, message: str) -> JSONResponse:
     return JSONResponse(
         status_code=status,
         content={"error": {"code": code, "message": message}},
+    )
+
+
+def _csp_for(html: str) -> str:
+    """Build the strict CSP for one inline-only page."""
+    script_hash = _inline_content_hash(html, "script")
+    style_hash = _inline_content_hash(html, "style")
+    return (
+        f"default-src 'self'; script-src 'self' '{script_hash}'; "
+        f"style-src 'self' '{style_hash}'; connect-src 'self'; "
+        "img-src 'self' data:; object-src 'none'; base-uri 'none'; "
+        "form-action 'self'; frame-ancestors 'none'"
     )
 
 

@@ -33,6 +33,14 @@ modules: they may import `contracts` and nothing with runtime side effects, and
   between the two is invisible until it reaches users.
 - **stdout is the MCP JSON-RPC channel.** Anything in `server.py` or `tools/`
   that writes to stdout corrupts the protocol. Log to stderr.
+- **Every served HTML page gets its own CSP hash, and may contain exactly one
+  inline `<style>` and one inline `<script>`.** `_inline_content_hash` matches
+  the *first* block of a tag, so a second `<style>`/`<script>` is silently
+  CSP-blocked at runtime — tests pass, the page breaks in the browser. A tag
+  with an attribute (`<script defer>`) misses the regex the same way. Editing a
+  page's inline content needs no Python change; the hash is recomputed from the
+  file at startup. `tests/test_web.py` guards both the one-block rule and that
+  `/` and `/flow` do not share a policy.
 - **`.env` is loaded at direct entry points only** — `agent/cli.py`, the
   `python -m agent.web` path, and `evals/run_eval.py` call
   `agent.config.load_env_file`. An ASGI import never loads it; Uvicorn must receive

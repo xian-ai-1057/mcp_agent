@@ -9,7 +9,7 @@ CLI 或 FastAPI adapter 建立 `AgentLoop`、透過 `MCPToolPool` 聚合隔離�
 
 ```mermaid
 flowchart LR
-    BROWSER["Browser<br/>HTML test bench"] -->|"GET / · POST /api/v1/runs"| WEB["FastAPI adapter<br/>AgentService"]
+    BROWSER["Browser<br/>test bench + flow player"] -->|"GET / · GET /flow · POST /api/v1/runs"| WEB["FastAPI adapter<br/>AgentService"]
     APP["Other application"] -->|"versioned JSON API"| WEB
     CLI["CLI"] --> CORE["AgentLoop<br/>one isolated run"]
     WEB --> CORE
@@ -35,7 +35,7 @@ flowchart LR
 |---|---|---|
 | 1 | [高階流程](#1-高階流程圖) | 一次 CLI／API 請求如何變成結果？ |
 | 2 | [系統架構](#2-系統架構圖) | 誰擁有生命週期、Gateway 與 MCP 邊界？ |
-| 3 | [服務與端到端序列](#3-服務生命週期與端到端流程圖) | FastAPI 如何啟動、執行請求與處理外部 HTTP？ |
+| 3 | [服務與端到端序列](#3-服務生命週期與端到端流程圖) | FastAPI 如何啟動、執行請求與處理外部 HTTP？`/flow` 為什麼是回放？ |
 | 4 | [Agent Loop](#4-agent-loop-流程圖) | 回合怎麼算？工具失敗怎麼辦？ |
 | 5 | [翻譯 policy](#5-自檢重譯決策流程) | 什麼時候驗證／重譯？為什麼不會無限迴圈？ |
 | 6 | [最長優先掃描](#6-術語掃描最長優先) | 為什麼「臨時額度」會壓過「額度」？ |
@@ -87,7 +87,7 @@ flowchart TD
 ```mermaid
 flowchart LR
     subgraph CLIENTS["呼叫端"]
-        BROWSER["Browser<br/>HTML test bench"]
+        BROWSER["Browser<br/>test bench + flow player"]
         APPC["Other API client"]
         CLIC["CLI"]
     end
@@ -286,6 +286,21 @@ sequenceDiagram
 圖中有三條互不相同的 HTTP：呼叫端進 `/api/v1/runs`、Agent host 往
 `GATEWAY_BASE_URL/chat/completions`、以及可選 RAG MCP 往
 `RAG_UPLOAD_BASE_URL/datacenter/v1/file`。MCP host 與 child server 之間目前是 stdio，並非 HTTP。
+
+### 3.1 `GET /flow` 是回放，不是串流
+
+`agent/static/flow.html` 把上面這段序列畫成動畫，目標讀者是**非工程的決策者**：節點用業務語言
+命名，並提供降速與逐步播放。它不需要任何新的後端機制 —— `RunResult.tool_calls` 每筆都帶
+`turn` 與 `initiator`，足以完整重建回合結構，所以頁面是對一次**已完成**的 run 做回放。
+
+這個選擇是刻意的，有兩個理由。其一，真實執行常在數十毫秒內結束，只有回放才可能放慢到看得見。
+其二，要讓工具**內部**的每一步都是量測值，就得讓每個 MCP server 回報自己的子步驟，
+那會讓 agent 層知道工具內部，直接違反本文件的分層原則。目前的取捨是：節點內容依真實演算法撰寫、
+回合數／工具／參數／命中率全部來自真實 `RunResult`，只有子步驟之間的節奏是為觀看而設定的名目值。
+頁面上明確標示了這件事。
+
+`/` 與 `/flow` 各自計算自己的 CSP hash（`_csp_for`），因此**每個頁面只能有一個 inline
+`<style>` 與一個 inline `<script>`**；`_inline_content_hash` 只會匹配第一個區塊。
 
 ---
 
